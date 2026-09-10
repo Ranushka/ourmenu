@@ -1,0 +1,107 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// A digitized menu. Created either by a restaurant or by any diner who
+// uploaded a photo of a menu that wasn't online yet — ownership is optional
+// until someone "claims" it via its restaurant WhatsApp number.
+model Menu {
+  id                String   @id @default(cuid())
+  slug              String   @unique // used in the shareable link
+  restaurantName    String
+  restaurantWhatsapp String? // E.164, e.g. +9715XXXXXXXX — order messages go here
+  claimedAt         DateTime? // set once a restaurant "manages" this menu
+  manageToken       String   @unique @default(cuid()) // secret link to the manage view
+  sourceImageUrl    String? // the uploaded menu photo/PDF this was parsed from
+  createdByRole     CreatedByRole @default(DINER)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  categories MenuCategory[]
+  items      MenuItem[]
+  orders     Order[]
+}
+
+enum CreatedByRole {
+  DINER
+  RESTAURANT
+}
+
+model MenuCategory {
+  id       String     @id @default(cuid())
+  menu     Menu       @relation(fields: [menuId], references: [id], onDelete: Cascade)
+  menuId   String
+  name     String
+  position Int        @default(0)
+  items    MenuItem[]
+}
+
+model MenuItem {
+  id           String        @id @default(cuid())
+  menu         Menu          @relation(fields: [menuId], references: [id], onDelete: Cascade)
+  menuId       String
+  category     MenuCategory? @relation(fields: [categoryId], references: [id])
+  categoryId   String?
+  name         String
+  description  String?
+  price        Decimal       @db.Decimal(10, 2)
+  currency     String        @default("AED")
+  isVeg        Boolean?      // null = unknown/unspecified
+  isAvailable  Boolean       @default(true)
+  photoUrl     String?       // illustration only — not guaranteed accurate
+  position     Int           @default(0)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  orderItems OrderItem[]
+}
+
+// A diner's remembered profile (address + standing preferences), keyed by
+// phone number so it can sync across devices, and mirrored in the browser's
+// localStorage for instant prefill.
+model DinerProfile {
+  id          String   @id @default(cuid())
+  phone       String   @unique // E.164
+  name        String?
+  address     String?
+  preferences String? // free text, e.g. "no sauce, fully cooked"
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  orders Order[]
+}
+
+// A completed "Order Now" action — a record of what was handed off to
+// WhatsApp, not a live order-management row. Fulfillment happens in chat.
+model Order {
+  id             String        @id @default(cuid())
+  menu           Menu          @relation(fields: [menuId], references: [id])
+  menuId         String
+  dinerProfile   DinerProfile? @relation(fields: [dinerProfileId], references: [id])
+  dinerProfileId String?
+  address        String?
+  preferences    String?
+  whatsappText   String // the exact message text sent to WhatsApp
+  createdAt      DateTime      @default(now())
+
+  items OrderItem[]
+}
+
+model OrderItem {
+  id          String   @id @default(cuid())
+  order       Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderId     String
+  menuItem    MenuItem @relation(fields: [menuItemId], references: [id])
+  menuItemId  String
+  quantity    Int      @default(1)
+  note        String? // per-item preference, e.g. "no onions"
+  priceAtOrder Decimal @db.Decimal(10, 2)
+}

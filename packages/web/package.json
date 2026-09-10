@@ -1,0 +1,8 @@
+{
+  "name": "@org/web",
+  "version": "0.0.1",
+  "private": true,
+  "dependencies": {
+    "react-router-dom": "^6.30.3"
+  }
+}

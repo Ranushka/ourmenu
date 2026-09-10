@@ -1,0 +1,71 @@
+/**
+ * Menu parsing: sends a photo/PDF of a menu to a vision-capable LLM via
+ * OpenRouter and asks for structured items back. Model is swappable via
+ * env so we can start on a free-tier model and upgrade later.
+ */
+
+const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
+
+// Free-tier-friendly default; override with OPENROUTER_MODEL env var.
+const DEFAULT_MODEL = process.env.OPENROUTER_MODEL || 'meta-llama/llama-3.2-11b-vision-instruct:free';
+
+export interface ParsedMenuItem {
+  name: string;
+  description?: string;
+  price: number;
+  category?: string;
+  isVeg?: boolean | null;
+}
+
+const SYSTEM_PROMPT = `You read photos of restaurant menus and extract every item as strict JSON.
+Return ONLY a JSON array (no markdown fences, no commentary) of objects shaped like:
+{"name": string, "description": string | null, "price": number, "category": string | null, "isVeg": boolean | null}
+- "price" is a plain number (no currency symbol).
+- "isVeg" is true for clearly vegetarian items, false for clearly non-veg (meat/fish/egg), null if unclear.
+- "category" is the section heading the item appeared under (e.g. "Starters"), null if none.
+- Skip section headings, prices-only lines, and non-item text.`;
+
+export async function parseMenuImage(imageUrl: string): Promise<ParsedMenuItem[]> {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) {
+    throw new Error('OPENROUTER_API_KEY is not set');
+  }
+
+  const res = await fetch(OPENROUTER_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: DEFAULT_MODEL,
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Extract the menu items from this photo as JSON.' },
+            { type: 'image_url', image_url: { url: imageUrl } },
+          ],
+        },
+      ],
+    }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`OpenRouter request failed (${res.status}): ${body}`);
+  }
+
+  const data = await res.json();
+  const content: string = data?.choices?.[0]?.message?.content ?? '[]';
+  const jsonText = content.trim().replace(/^```(json)?/i, '').replace(/```$/, '').trim();
+
+  try {
+    const parsed = JSON.parse(jsonText);
+    if (!Array.isArray(parsed)) throw new Error('Model did not return an array');
+    return parsed;
+  } catch (err) {
+    throw new Error(`Could not parse model output as JSON: ${(err as Error).message}\nRaw: ${content}`);
+  }
+}

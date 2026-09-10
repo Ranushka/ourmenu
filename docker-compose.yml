@@ -1,0 +1,36 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ourmenu
+      POSTGRES_PASSWORD: ourmenu
+      POSTGRES_DB: ourmenu
+    volumes:
+      - ourmenu_postgres_data:/var/lib/postgresql/data
+
+  api:
+    build:
+      context: .
+      dockerfile: packages/api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    environment:
+      DATABASE_URL: postgresql://ourmenu:ourmenu@postgres:5432/ourmenu?schema=public
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL}
+      PORT: 3333
+
+  web:
+    build:
+      context: .
+      dockerfile: packages/web/Dockerfile
+      args:
+        VITE_API_URL: ${PUBLIC_API_URL}
+    restart: unless-stopped
+    depends_on:
+      - api
+
+volumes:
+  ourmenu_postgres_data:
