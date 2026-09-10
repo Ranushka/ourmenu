@@ -14,6 +14,5 @@ COPY --from=build /repo/packages/api/dist ./dist
 COPY --from=build /repo/packages/api/prisma ./prisma
 COPY --from=build /repo/packages/api/prisma.config.ts ./prisma.config.ts
 COPY --from=build /repo/node_modules ./node_modules
-COPY --from=build /repo/packages/api/node_modules ./packages/api/node_modules
 EXPOSE 3333
-CMD ["sh", "-c", "npx prisma migrate deploy --config prisma.config.ts && node dist/main.js"]
+CMD ["sh", "-c", "npx prisma db push --skip-generate --accept-data-loss --config prisma.config.ts && node dist/main.js"]
