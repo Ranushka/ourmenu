@@ -15,4 +15,4 @@ COPY --from=build /repo/packages/api/prisma ./prisma
 COPY --from=build /repo/packages/api/prisma.config.ts ./prisma.config.ts
 COPY --from=build /repo/node_modules ./node_modules
 EXPOSE 3333
-CMD ["sh", "-c", "npx prisma db push --skip-generate --accept-data-loss --config prisma.config.ts && node dist/main.js"]
+CMD ["sh", "-c", "npx prisma db push --accept-data-loss --config prisma.config.ts && node dist/main.js"]
