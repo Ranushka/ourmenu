@@ -8,8 +8,12 @@ RUN npx prisma generate --config packages/api/prisma.config.ts
 RUN npx nx build @org/api
 
 FROM node:22-alpine
+# pdftoppm (poppler-utils) renders a PDF menu's first page to PNG for the
+# vision model — LLM image_url inputs expect an image, not a PDF.
+RUN apk add --no-cache poppler-utils
 WORKDIR /app
 ENV NODE_ENV=production
+ENV UPLOADS_DIR=/app/uploads
 COPY --from=build /repo/packages/api/dist ./dist
 COPY --from=build /repo/packages/api/prisma ./prisma
 COPY --from=build /repo/packages/api/prisma.config.ts ./prisma.config.ts

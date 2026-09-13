@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import { menusRouter } from './routes/menus';
 import { ordersRouter } from './routes/orders';
+import { uploadsRouter, UPLOADS_DIR } from './routes/uploads';
 
 const app = express();
 
@@ -12,6 +13,8 @@ app.get('/api/health', (_req, res) => {
   res.json({ ok: true });
 });
 
+app.use('/uploads', express.static(UPLOADS_DIR));
+app.use('/api/uploads', uploadsRouter);
 app.use('/api/menus', menusRouter);
 app.use('/api/orders', ordersRouter);
 

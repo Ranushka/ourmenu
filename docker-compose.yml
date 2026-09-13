@@ -20,7 +20,10 @@ services:
       DATABASE_URL: postgresql://ourmenu:ourmenu@postgres:5432/ourmenu?schema=public
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
       OPENROUTER_MODEL: ${OPENROUTER_MODEL}
+      PUBLIC_API_URL: ${PUBLIC_API_URL}
       PORT: 3333
+    volumes:
+      - ourmenu_uploads:/app/uploads
 
   web:
     build:
@@ -34,3 +37,4 @@ services:
 
 volumes:
   ourmenu_postgres_data:
+  ourmenu_uploads:

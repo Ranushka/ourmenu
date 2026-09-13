@@ -54,6 +54,20 @@ label {
   font-size: 0.9rem;
 }
 
+.upload-preview {
+  width: 100%;
+  max-height: 240px;
+  object-fit: contain;
+  border: 1px solid #eee;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+  background: #fff;
+}
+.upload-filename {
+  margin: -0.5rem 0 1rem;
+  color: #666;
+}
+
 .upload-page,
 .upload-result,
 .manage-page {

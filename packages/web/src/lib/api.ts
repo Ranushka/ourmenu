@@ -12,6 +12,18 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
+/** Uploads a picked file (photo or PDF) and returns its public URL. */
+async function uploadFile(file: File): Promise<{ url: string }> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const res = await fetch(`${API_URL}/api/uploads`, { method: 'POST', body: formData });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `Upload failed: ${res.status}`);
+  }
+  return res.json();
+}
+
 export interface MenuItem {
   id: string;
   categoryId: string | null;
@@ -40,6 +52,8 @@ export interface Menu {
 }
 
 export const api = {
+  uploadFile,
+
   createMenu: (data: { restaurantName: string; imageUrl: string; createdByRole?: 'DINER' | 'RESTAURANT' }) =>
     request<{ slug: string; manageToken: string; itemCount: number }>('/api/menus', {
       method: 'POST',
