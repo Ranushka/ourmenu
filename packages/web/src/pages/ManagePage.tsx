@@ -50,34 +50,36 @@ export function ManagePage() {
         <p>Orders go to WhatsApp: {menu.restaurantWhatsapp}</p>
       )}
 
-      <table className="manage-table">
-        <thead>
-          <tr>
-            <th>Item</th>
-            <th>Price</th>
-            <th>Available</th>
-            <th>Photo</th>
-          </tr>
-        </thead>
-        <tbody>
-          {menu.items.map((item) => (
-            <tr key={item.id} className={item.isAvailable ? '' : 'unavailable'}>
-              <td>{item.name}</td>
-              <td>
-                {item.currency} {item.price}
-              </td>
-              <td>
-                <button onClick={() => toggleAvailable(item.id, item.isAvailable)}>
-                  {item.isAvailable ? 'Available' : 'Sold out'}
-                </button>
-              </td>
-              <td>
-                <button onClick={() => updatePhoto(item.id)}>{item.photoUrl ? 'Change photo' : 'Add photo'}</button>
-              </td>
+      <div className="manage-table-scroll">
+        <table className="manage-table">
+          <thead>
+            <tr>
+              <th>Item</th>
+              <th>Price</th>
+              <th>Available</th>
+              <th>Photo</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {menu.items.map((item) => (
+              <tr key={item.id} className={item.isAvailable ? '' : 'unavailable'}>
+                <td>{item.name}</td>
+                <td>
+                  {item.currency} {item.price}
+                </td>
+                <td>
+                  <button onClick={() => toggleAvailable(item.id, item.isAvailable)}>
+                    {item.isAvailable ? 'Available' : 'Sold out'}
+                  </button>
+                </td>
+                <td>
+                  <button onClick={() => updatePhoto(item.id)}>{item.photoUrl ? 'Change photo' : 'Add photo'}</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
