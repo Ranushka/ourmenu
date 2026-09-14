@@ -2,15 +2,29 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { api, Menu } from '../lib/api';
 
-/** Restaurant-side manage view, reached only via the private manageToken link. */
+/**
+ * Restaurant-side manage view, reached only via the private manageToken
+ * link. The restaurant name and WhatsApp number are already set from
+ * upload time (parsed from the menu / entered by whoever uploaded it) —
+ * this is for corrections, not initial setup.
+ */
 export function ManagePage() {
   const { manageToken = '' } = useParams();
   const [menu, setMenu] = useState<Menu | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [whatsapp, setWhatsapp] = useState('');
+  const [editingDetails, setEditingDetails] = useState(false);
+  const [nameDraft, setNameDraft] = useState('');
+  const [whatsappDraft, setWhatsappDraft] = useState('');
 
   function reload() {
-    api.getManageMenu(manageToken).then(setMenu).catch((e) => setError(e.message));
+    api
+      .getManageMenu(manageToken)
+      .then((m) => {
+        setMenu(m);
+        setNameDraft(m.restaurantName);
+        setWhatsappDraft(m.restaurantWhatsapp);
+      })
+      .catch((e) => setError(e.message));
   }
 
   useEffect(reload, [manageToken]);
@@ -27,9 +41,9 @@ export function ManagePage() {
     reload();
   }
 
-  async function claim() {
-    if (!whatsapp) return;
-    await api.claimMenu(manageToken, whatsapp);
+  async function saveDetails() {
+    await api.updateMenu(manageToken, { restaurantName: nameDraft, restaurantWhatsapp: whatsappDraft });
+    setEditingDetails(false);
     reload();
   }
 
@@ -40,14 +54,26 @@ export function ManagePage() {
     <div className="manage-page">
       <h1>Manage: {menu.restaurantName}</h1>
 
-      {!menu.restaurantWhatsapp ? (
-        <div className="claim-box">
-          <p>Orders placed on this menu will be sent to your WhatsApp. Set the number to receive them:</p>
-          <input value={whatsapp} onChange={(e) => setWhatsapp(e.target.value)} placeholder="+9715XXXXXXXX" />
-          <button onClick={claim}>Save</button>
-        </div>
+      {!editingDetails ? (
+        <p className="manage-details-row">
+          Orders go to WhatsApp: {menu.restaurantWhatsapp}{' '}
+          <button onClick={() => setEditingDetails(true)}>Fix name / number</button>
+        </p>
       ) : (
-        <p>Orders go to WhatsApp: {menu.restaurantWhatsapp}</p>
+        <div className="manage-details-edit">
+          <label>
+            Restaurant name
+            <input value={nameDraft} onChange={(e) => setNameDraft(e.target.value)} />
+          </label>
+          <label>
+            WhatsApp number orders go to
+            <input value={whatsappDraft} onChange={(e) => setWhatsappDraft(e.target.value)} placeholder="+9715XXXXXXXX" />
+          </label>
+          <div className="checkout-actions">
+            <button onClick={() => setEditingDetails(false)}>Cancel</button>
+            <button onClick={saveDetails}>Save</button>
+          </div>
+        </div>
       )}
 
       <div className="manage-table-scroll">

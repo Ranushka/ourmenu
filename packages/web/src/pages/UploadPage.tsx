@@ -5,19 +5,19 @@ import { api } from '../lib/api';
 /**
  * Anyone can land here — a diner tired of an unsearchable paper menu, or a
  * restaurant wanting a proper digital menu. They pick a photo (or a PDF
- * straight from their files), we parse it, and hand back a shareable link
- * + a private manage link.
+ * straight from their files); we read the restaurant's name off the menu
+ * itself. The one thing we can't derive from a photo or a URL is where
+ * orders should go, so that's the only thing asked for.
  */
 export function UploadPage() {
   const navigate = useNavigate();
-  const [restaurantName, setRestaurantName] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [role, setRole] = useState<'DINER' | 'RESTAURANT'>('DINER');
+  const [whatsapp, setWhatsapp] = useState('');
   const [uploading, setUploading] = useState(false);
   const [parsing, setParsing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<{ slug: string; manageToken: string } | null>(null);
+  const [result, setResult] = useState<{ slug: string; manageToken: string; restaurantName: string } | null>(null);
 
   function onFileChange(f: File | null) {
     setFile(f);
@@ -34,7 +34,7 @@ export function UploadPage() {
       const { url: imageUrl } = await api.uploadFile(file);
       setUploading(false);
       setParsing(true);
-      const res = await api.createMenu({ restaurantName, imageUrl, createdByRole: role });
+      const res = await api.createMenu({ imageUrl, restaurantWhatsapp: whatsapp });
       setResult(res);
     } catch (e) {
       setError((e as Error).message);
@@ -47,12 +47,12 @@ export function UploadPage() {
   if (result) {
     return (
       <div className="upload-result">
-        <h2>Menu digitized 🎉</h2>
+        <h2>{result.restaurantName} is digitized 🎉</h2>
         <p>
           Diner link: <a href={`/m/${result.slug}`}>{window.location.origin}/m/{result.slug}</a>
         </p>
         <p>
-          Manage link (keep this private):{' '}
+          Manage link (keep this private — fix the name, number, or any misread items here):{' '}
           <a href={`/m/${result.slug}/manage/${result.manageToken}`}>
             {window.location.origin}/m/{result.slug}/manage/{result.manageToken}
           </a>
@@ -70,11 +70,6 @@ export function UploadPage() {
       <p>Take a photo of a menu (or pick a PDF) — we'll turn it into a searchable, orderable page tied to WhatsApp.</p>
 
       <label>
-        Restaurant name
-        <input value={restaurantName} onChange={(e) => setRestaurantName(e.target.value)} />
-      </label>
-
-      <label>
         Menu photo or PDF
         <input
           type="file"
@@ -86,15 +81,20 @@ export function UploadPage() {
       {file && !previewUrl && <p className="upload-filename">📄 {file.name}</p>}
 
       <label>
-        Who's uploading?
-        <select value={role} onChange={(e) => setRole(e.target.value as 'DINER' | 'RESTAURANT')}>
-          <option value="DINER">Just a diner — I don't have this restaurant's menu online</option>
-          <option value="RESTAURANT">I'm the restaurant</option>
-        </select>
+        Restaurant's WhatsApp number
+        <input
+          value={whatsapp}
+          onChange={(e) => setWhatsapp(e.target.value)}
+          placeholder="+9715XXXXXXXX"
+          type="tel"
+        />
       </label>
+      <p className="field-hint">
+        This is the only thing we can't read off the menu itself — it's where orders placed on this link get sent.
+      </p>
 
       {error && <p className="page-error">{error}</p>}
-      <button disabled={busy || !restaurantName || !file} onClick={submit}>
+      <button disabled={busy || !file || !whatsapp} onClick={submit}>
         {uploading ? 'Uploading…' : parsing ? 'Reading the menu…' : 'Digitize menu'}
       </button>
     </div>

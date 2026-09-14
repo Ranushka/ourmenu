@@ -10,29 +10,25 @@ datasource db {
   provider = "postgresql"
 }
 
-// A digitized menu. Created either by a restaurant or by any diner who
-// uploaded a photo of a menu that wasn't online yet — ownership is optional
-// until someone "claims" it via its restaurant WhatsApp number.
+// A digitized menu. Anyone — a diner or the restaurant — can create one by
+// uploading a photo/PDF. There's no separate "claim" step: the restaurant's
+// WhatsApp number (where orders get sent) is required at creation time,
+// since it's the one thing that genuinely can't be derived from a URL or
+// the image itself. The manage link exists for corrections afterwards, not
+// as a gate before ordering works.
 model Menu {
-  id                String   @id @default(cuid())
-  slug              String   @unique // used in the shareable link
-  restaurantName    String
-  restaurantWhatsapp String? // E.164, e.g. +9715XXXXXXXX — order messages go here
-  claimedAt         DateTime? // set once a restaurant "manages" this menu
-  manageToken       String   @unique @default(cuid()) // secret link to the manage view
-  sourceImageUrl    String? // the uploaded menu photo/PDF this was parsed from
-  createdByRole     CreatedByRole @default(DINER)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  id                 String   @id @default(cuid())
+  slug               String   @unique // used in the shareable link
+  restaurantName     String // best-effort, extracted from the menu image by the parser
+  restaurantWhatsapp String // E.164, e.g. +9715XXXXXXXX — order messages go here
+  manageToken        String   @unique @default(cuid()) // secret link to the manage view
+  sourceImageUrl     String? // the uploaded menu photo/PDF this was parsed from
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
   categories MenuCategory[]
   items      MenuItem[]
   orders     Order[]
-}
-
-enum CreatedByRole {
-  DINER
-  RESTAURANT
 }
 
 model MenuCategory {

@@ -1,7 +1,9 @@
 /**
  * Menu parsing: sends a photo/PDF of a menu to a vision-capable LLM via
- * OpenRouter and asks for structured items back. Model is swappable via
- * env so we can start on a free-tier model and upgrade later.
+ * OpenRouter and asks for structured items back, plus a best-effort guess
+ * at the restaurant's name from the image itself (most menus print it) —
+ * the uploader is never asked to type it. Model is swappable via env so we
+ * can start on a free-tier model and upgrade later.
  */
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
@@ -17,15 +19,26 @@ export interface ParsedMenuItem {
   isVeg?: boolean | null;
 }
 
-const SYSTEM_PROMPT = `You read photos of restaurant menus and extract every item as strict JSON.
-Return ONLY a JSON array (no markdown fences, no commentary) of objects shaped like:
-{"name": string, "description": string | null, "price": number, "category": string | null, "isVeg": boolean | null}
+export interface ParsedMenu {
+  restaurantName: string | null;
+  items: ParsedMenuItem[];
+}
+
+const SYSTEM_PROMPT = `You read photos of restaurant menus and extract structured data as strict JSON.
+Return ONLY a JSON object (no markdown fences, no commentary) shaped like:
+{
+  "restaurantName": string | null,
+  "items": [
+    {"name": string, "description": string | null, "price": number, "category": string | null, "isVeg": boolean | null}
+  ]
+}
+- "restaurantName" is the restaurant/cafe's name if it appears anywhere on the menu (header, logo text, footer), else null. Do not guess from cuisine type.
 - "price" is a plain number (no currency symbol).
 - "isVeg" is true for clearly vegetarian items, false for clearly non-veg (meat/fish/egg), null if unclear.
 - "category" is the section heading the item appeared under (e.g. "Starters"), null if none.
-- Skip section headings, prices-only lines, and non-item text.`;
+- Skip section headings, prices-only lines, and non-item text from "items".`;
 
-export async function parseMenuImage(imageUrl: string): Promise<ParsedMenuItem[]> {
+export async function parseMenuImage(imageUrl: string): Promise<ParsedMenu> {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
     throw new Error('OPENROUTER_API_KEY is not set');
@@ -44,7 +57,7 @@ export async function parseMenuImage(imageUrl: string): Promise<ParsedMenuItem[]
         {
           role: 'user',
           content: [
-            { type: 'text', text: 'Extract the menu items from this photo as JSON.' },
+            { type: 'text', text: 'Extract the restaurant name and menu items from this photo as JSON.' },
             { type: 'image_url', image_url: { url: imageUrl } },
           ],
         },
@@ -58,13 +71,13 @@ export async function parseMenuImage(imageUrl: string): Promise<ParsedMenuItem[]
   }
 
   const data = await res.json();
-  const content: string = data?.choices?.[0]?.message?.content ?? '[]';
+  const content: string = data?.choices?.[0]?.message?.content ?? '{}';
   const jsonText = content.trim().replace(/^```(json)?/i, '').replace(/```$/, '').trim();
 
   try {
     const parsed = JSON.parse(jsonText);
-    if (!Array.isArray(parsed)) throw new Error('Model did not return an array');
-    return parsed;
+    if (!parsed || !Array.isArray(parsed.items)) throw new Error('Model did not return { restaurantName, items }');
+    return { restaurantName: parsed.restaurantName ?? null, items: parsed.items };
   } catch (err) {
     throw new Error(`Could not parse model output as JSON: ${(err as Error).message}\nRaw: ${content}`);
   }

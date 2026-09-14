@@ -67,6 +67,11 @@ label {
   margin: -0.5rem 0 1rem;
   color: #666;
 }
+.field-hint {
+  margin: -0.75rem 0 1rem;
+  color: #888;
+  font-size: 0.8rem;
+}
 
 .upload-page,
 .upload-result,
@@ -198,6 +203,20 @@ label {
 }
 .checkout-actions button {
   flex: 1 1 auto;
+}
+
+.manage-details-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.manage-details-edit {
+  border: 1px solid #eee;
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 1rem;
 }
 
 .manage-table-scroll {

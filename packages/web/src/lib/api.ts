@@ -46,7 +46,7 @@ export interface Menu {
   id: string;
   slug: string;
   restaurantName: string;
-  restaurantWhatsapp: string | null;
+  restaurantWhatsapp: string;
   categories: MenuCategory[];
   items: MenuItem[];
 }
@@ -54,8 +54,8 @@ export interface Menu {
 export const api = {
   uploadFile,
 
-  createMenu: (data: { restaurantName: string; imageUrl: string; createdByRole?: 'DINER' | 'RESTAURANT' }) =>
-    request<{ slug: string; manageToken: string; itemCount: number }>('/api/menus', {
+  createMenu: (data: { imageUrl: string; restaurantWhatsapp: string }) =>
+    request<{ slug: string; manageToken: string; restaurantName: string; itemCount: number }>('/api/menus', {
       method: 'POST',
       body: JSON.stringify(data),
     }),
@@ -64,10 +64,10 @@ export const api = {
 
   getManageMenu: (manageToken: string) => request<Menu>(`/api/menus/manage/${manageToken}`),
 
-  claimMenu: (manageToken: string, whatsapp: string) =>
-    request(`/api/menus/manage/${manageToken}/claim`, {
-      method: 'POST',
-      body: JSON.stringify({ whatsapp }),
+  updateMenu: (manageToken: string, data: Partial<Pick<Menu, 'restaurantName' | 'restaurantWhatsapp'>>) =>
+    request<Menu>(`/api/menus/manage/${manageToken}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
     }),
 
   updateItem: (
