@@ -57,6 +57,10 @@ export async function parseMenuImage(imageUrl: string): Promise<ParsedMenu> {
     },
     body: JSON.stringify({
       model: DEFAULT_MODEL,
+      // Explicit: a proxy in front of OpenRouter (e.g. 9router) can default
+      // to a streaming-shaped response when this is omitted, which breaks
+      // res.json() below.
+      stream: false,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         {
