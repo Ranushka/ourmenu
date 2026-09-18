@@ -19,6 +19,7 @@ services:
     environment:
       DATABASE_URL: postgresql://ourmenu:ourmenu@postgres:5432/ourmenu?schema=public
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      OPENROUTER_URL: ${OPENROUTER_URL}
       OPENROUTER_MODEL: ${OPENROUTER_MODEL}
       PUBLIC_API_URL: ${PUBLIC_API_URL}
       PORT: 3333
