@@ -6,7 +6,9 @@
  * can start on a free-tier model and upgrade later.
  */
 
-const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
+// Points at OpenRouter directly by default; override with OPENROUTER_URL to
+// route through a proxy (e.g. a self-hosted 9router instance) instead.
+const OPENROUTER_URL = process.env.OPENROUTER_URL || 'https://openrouter.ai/api/v1/chat/completions';
 
 // Free-tier-friendly default; override with OPENROUTER_MODEL env var.
 const DEFAULT_MODEL = process.env.OPENROUTER_MODEL || 'meta-llama/llama-3.2-11b-vision-instruct:free';
