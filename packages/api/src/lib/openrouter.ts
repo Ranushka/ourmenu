@@ -11,7 +11,10 @@
 const OPENROUTER_URL = process.env.OPENROUTER_URL || 'https://openrouter.ai/api/v1/chat/completions';
 
 // Free-tier-friendly default; override with OPENROUTER_MODEL env var.
-const DEFAULT_MODEL = process.env.OPENROUTER_MODEL || 'meta-llama/llama-3.2-11b-vision-instruct:free';
+// meta-llama/llama-3.2-11b-vision-instruct:free was removed from OpenRouter's
+// model list (confirmed gone 2026-09-18) -- switched to a maintained free
+// vision-language model with strong document/OCR performance.
+const DEFAULT_MODEL = process.env.OPENROUTER_MODEL || 'qwen/qwen3.8-27b:free';
 
 export interface ParsedMenuItem {
   name: string;
