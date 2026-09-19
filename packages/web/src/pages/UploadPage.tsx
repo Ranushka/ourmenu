@@ -80,17 +80,6 @@ export function UploadPage({ initialWhatsapp }: { initialWhatsapp?: string } = {
       <p>Take a photo of a menu (or pick a PDF) — we'll turn it into a searchable, orderable page tied to WhatsApp.</p>
 
       <label>
-        Menu photo or PDF
-        <input
-          type="file"
-          accept="image/*,application/pdf"
-          onChange={(e) => onFileChange(e.target.files?.[0] ?? null)}
-        />
-      </label>
-      {previewUrl && <img src={previewUrl} alt="Menu preview" className="upload-preview" />}
-      {file && !previewUrl && <p className="upload-filename">📄 {file.name}</p>}
-
-      <label>
         Restaurant's WhatsApp number
         <input
           value={whatsapp}
@@ -102,6 +91,17 @@ export function UploadPage({ initialWhatsapp }: { initialWhatsapp?: string } = {
       <p className="field-hint">
         This is the only thing we can't read off the menu itself — it's where orders placed on this link get sent.
       </p>
+
+      <label>
+        Menu photo or PDF
+        <input
+          type="file"
+          accept="image/*,application/pdf"
+          onChange={(e) => onFileChange(e.target.files?.[0] ?? null)}
+        />
+      </label>
+      {previewUrl && <img src={previewUrl} alt="Menu preview" className="upload-preview" />}
+      {file && !previewUrl && <p className="upload-filename">📄 {file.name}</p>}
 
       {error && <p className="page-error">{error}</p>}
       <button disabled={busy || !file || !whatsapp} onClick={submit}>
