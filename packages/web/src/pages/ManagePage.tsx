@@ -54,6 +54,10 @@ export function ManagePage() {
     <div className="manage-page">
       <h1>Manage: {menu.restaurantName}</h1>
 
+      <p className="manage-diner-link">
+        Diner link (share this one): <a href={`/m/${menu.slug}`}>{window.location.origin}/m/{menu.slug}</a>
+      </p>
+
       {!editingDetails ? (
         <p className="manage-details-row">
           Orders go to WhatsApp: {menu.restaurantWhatsapp}{' '}
