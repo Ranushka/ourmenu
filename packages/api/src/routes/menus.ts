@@ -4,9 +4,16 @@ import { chunkPages, parseMenuImageChunk, ParsedMenuItem } from '../lib/openrout
 
 export const menusRouter = Router();
 
-function slugify(name: string): string {
-  const base = name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-  return `${base || 'menu'}-${Math.random().toString(36).slice(2, 7)}`;
+// The diner link is keyed off the WhatsApp number the uploader submitted,
+// not the restaurant name off the menu image -- a number is stable across
+// re-uploads/corrections and is what the uploader actually typed in,
+// rather than whatever the parser happened to read off a logo.
+// NOTE: this makes the slug guessable from the number alone, which is a
+// known, deliberately deferred tradeoff for now (easy to add a random
+// suffix back later without changing anything else).
+function slugify(whatsapp: string): string {
+  const digits = whatsapp.replace(/[^0-9]/g, '');
+  return digits || `menu-${Math.random().toString(36).slice(2, 7)}`;
 }
 
 // A model occasionally returns an item with no usable price (e.g. a
@@ -119,15 +126,33 @@ menusRouter.post('/', async (req, res) => {
   const restaurantName = parsed.restaurantName?.trim() || 'Menu';
 
   try {
-    const menu = await prisma.menu.create({
-      data: {
-        slug: slugify(restaurantName),
-        restaurantName,
-        restaurantWhatsapp,
-        sourceImageUrl: imageUrls[0],
-        status: restChunks.length > 0 ? 'processing' : 'ready',
-      },
-    });
+    // Slug collides if this number already has a menu (e.g. a re-upload) --
+    // fall back to a suffixed slug rather than failing the whole upload.
+    // Not a fix for the number being guessable in the first place, just
+    // for two menus wanting the same one.
+    let menu;
+    try {
+      menu = await prisma.menu.create({
+        data: {
+          slug: slugify(restaurantWhatsapp),
+          restaurantName,
+          restaurantWhatsapp,
+          sourceImageUrl: imageUrls[0],
+          status: restChunks.length > 0 ? 'processing' : 'ready',
+        },
+      });
+    } catch (err) {
+      if ((err as { code?: string }).code !== 'P2002') throw err;
+      menu = await prisma.menu.create({
+        data: {
+          slug: `${slugify(restaurantWhatsapp)}-${Math.random().toString(36).slice(2, 7)}`,
+          restaurantName,
+          restaurantWhatsapp,
+          sourceImageUrl: imageUrls[0],
+          status: restChunks.length > 0 ? 'processing' : 'ready',
+        },
+      });
+    }
 
     const itemCount = await appendItems(menu.id, parsed.items);
 
