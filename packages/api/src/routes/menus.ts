@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma';
-import { parseMenuImage } from '../lib/openrouter';
+import { chunkPages, parseMenuImageChunk, ParsedMenuItem } from '../lib/openrouter';
 
 export const menusRouter = Router();
 
@@ -9,12 +9,78 @@ function slugify(name: string): string {
   return `${base || 'menu'}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
+// A model occasionally returns an item with no usable price (e.g. a
+// "market price" line, or a mis-read row) -- price is a required column,
+// so an item like that would otherwise crash the whole createMany and
+// lose every other item in the chunk. Drop just that item instead of
+// failing the whole batch over one bad row.
+function validItems(items: ParsedMenuItem[]): ParsedMenuItem[] {
+  return items.filter((item) => item.name && typeof item.price === 'number' && Number.isFinite(item.price));
+}
+
+/** Appends a parsed chunk's items (and any new categories they need) to an existing menu. Returns how many items were saved. */
+async function appendItems(menuId: string, rawItems: ParsedMenuItem[]): Promise<number> {
+  const items = validItems(rawItems);
+  if (items.length === 0) return 0;
+
+  const existingCategories = await prisma.menuCategory.findMany({ where: { menuId } });
+  const categoryIdByName = new Map(existingCategories.map((c) => [c.name, c.id]));
+  const newCategoryNames = [...new Set(items.map((i) => i.category).filter(Boolean))].filter(
+    (name) => !categoryIdByName.has(name as string)
+  ) as string[];
+
+  if (newCategoryNames.length > 0) {
+    const nextPosition = existingCategories.length;
+    await prisma.menuCategory.createMany({
+      data: newCategoryNames.map((name, i) => ({ menuId, name, position: nextPosition + i })),
+    });
+    const created = await prisma.menuCategory.findMany({ where: { menuId, name: { in: newCategoryNames } } });
+    created.forEach((c) => categoryIdByName.set(c.name, c.id));
+  }
+
+  const existingItemCount = await prisma.menuItem.count({ where: { menuId } });
+  await prisma.menuItem.createMany({
+    data: items.map((item, i) => ({
+      menuId,
+      categoryId: item.category ? categoryIdByName.get(item.category) : undefined,
+      name: item.name,
+      description: item.description || undefined,
+      price: item.price,
+      isVeg: item.isVeg ?? null,
+      position: existingItemCount + i,
+    })),
+  });
+
+  return items.length;
+}
+
+/** Parses remaining page-chunks one at a time and appends their items, marking the menu ready/failed when done. Not awaited by the request handler -- runs after the response has already gone out. */
+async function processRemainingChunks(menuId: string, chunks: string[][]) {
+  try {
+    for (const pages of chunks) {
+      const parsed = await parseMenuImageChunk(pages);
+      await appendItems(menuId, parsed.items);
+    }
+    await prisma.menu.update({ where: { id: menuId }, data: { status: 'ready' } });
+  } catch (err) {
+    await prisma.menu
+      .update({ where: { id: menuId }, data: { status: 'failed', parseError: (err as Error).message } })
+      .catch((updateErr) => console.error(`Menu ${menuId}: failed to record parse failure`, updateErr));
+  }
+}
+
 /**
- * Create a menu from an already-uploaded image URL. Anyone can call this —
+ * Create a menu from already-uploaded page image(s). Anyone can call this —
  * a diner digitizing a restaurant's paper menu, or the restaurant itself.
  * The restaurant name is read off the menu photo by the parser, not typed
  * in — but the WhatsApp number orders should go to can't be derived from
  * a URL or the image, so it's the one thing asked for up front.
+ *
+ * Only the first page-chunk is parsed before responding (fast enough for
+ * one request/response cycle, and it's where a menu's name usually is,
+ * for a proper slug). A menu with more pages than that keeps parsing in
+ * the background — status starts "processing" and flips to "ready" (or
+ * "failed") once every chunk's been through.
  */
 menusRouter.post('/', async (req, res) => {
   const { imageUrls, restaurantWhatsapp } = req.body as {
@@ -26,21 +92,16 @@ menusRouter.post('/', async (req, res) => {
     return res.status(400).json({ error: 'imageUrls and restaurantWhatsapp are required' });
   }
 
+  const [firstChunk, ...restChunks] = chunkPages(imageUrls);
+
   let parsed;
   try {
-    parsed = await parseMenuImage(imageUrls);
+    parsed = await parseMenuImageChunk(firstChunk);
   } catch (err) {
     return res.status(502).json({ error: `Menu parsing failed: ${(err as Error).message}` });
   }
 
   const restaurantName = parsed.restaurantName?.trim() || 'Menu';
-  // A model occasionally returns an item with no usable price (e.g. a
-  // "market price" line, or a mis-read row) -- price is a required
-  // column, so an item like that would otherwise crash the whole
-  // createMany and lose every other item in the menu. Drop just that
-  // item instead of failing the entire upload over one bad row.
-  const items = parsed.items.filter((item) => item.name && typeof item.price === 'number' && Number.isFinite(item.price));
-  const categoryNames = [...new Set(items.map((i) => i.category).filter(Boolean))] as string[];
 
   try {
     const menu = await prisma.menu.create({
@@ -49,35 +110,23 @@ menusRouter.post('/', async (req, res) => {
         restaurantName,
         restaurantWhatsapp,
         sourceImageUrl: imageUrls[0],
-        categories: {
-          create: categoryNames.map((name, position) => ({ name, position })),
-        },
+        status: restChunks.length > 0 ? 'processing' : 'ready',
       },
-      include: { categories: true },
     });
 
-    const categoryIdByName = new Map(menu.categories.map((c) => [c.name, c.id]));
-
-    if (items.length > 0) {
-      await prisma.menuItem.createMany({
-        data: items.map((item, position) => ({
-          menuId: menu.id,
-          categoryId: item.category ? categoryIdByName.get(item.category) : undefined,
-          name: item.name,
-          description: item.description || undefined,
-          price: item.price,
-          isVeg: item.isVeg ?? null,
-          position,
-        })),
-      });
-    }
+    const itemCount = await appendItems(menu.id, parsed.items);
 
     res.status(201).json({
       slug: menu.slug,
       manageToken: menu.manageToken,
       restaurantName: menu.restaurantName,
-      itemCount: items.length,
+      itemCount,
+      status: menu.status,
     });
+
+    if (restChunks.length > 0) {
+      processRemainingChunks(menu.id, restChunks);
+    }
   } catch (err) {
     res.status(500).json({ error: `Could not save the menu: ${(err as Error).message}` });
   }
@@ -93,7 +142,7 @@ menusRouter.get('/:slug', async (req, res) => {
     },
   });
   if (!menu) return res.status(404).json({ error: 'Menu not found' });
-  const { manageToken, ...publicMenu } = menu;
+  const { manageToken, parseError, ...publicMenu } = menu;
   res.json(publicMenu);
 });
 

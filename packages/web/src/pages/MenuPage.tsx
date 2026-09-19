@@ -24,7 +24,27 @@ export function MenuPage() {
   const [placing, setPlacing] = useState(false);
 
   useEffect(() => {
-    api.getMenu(slug).then(setMenu).catch((e) => setError(e.message));
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+
+    function load() {
+      api
+        .getMenu(slug)
+        .then((m) => {
+          if (cancelled) return;
+          setMenu(m);
+          // A long menu keeps parsing after the first page-chunk -- poll
+          // for more items landing until the background parse finishes.
+          if (m.status === 'processing') timer = setTimeout(load, 5000);
+        })
+        .catch((e) => !cancelled && setError(e.message));
+    }
+    load();
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, [slug]);
 
   const items = useMemo(() => {
@@ -84,6 +104,7 @@ export function MenuPage() {
     <div className="menu-page">
       <header className="menu-header">
         <h1>{menu.restaurantName}</h1>
+        {menu.status === 'processing' && <p className="field-hint">Still reading through the rest of this menu — more items may appear shortly.</p>}
         <div className="menu-controls">
           <input
             className="search-input"

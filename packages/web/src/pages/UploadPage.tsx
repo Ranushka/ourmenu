@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api } from '../lib/api';
+import { api, MenuStatus } from '../lib/api';
 
 /**
  * Anyone can land here — a diner tired of an unsearchable paper menu, or a
@@ -17,7 +17,9 @@ export function UploadPage() {
   const [uploading, setUploading] = useState(false);
   const [parsing, setParsing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<{ slug: string; manageToken: string; restaurantName: string } | null>(null);
+  const [result, setResult] = useState<{ slug: string; manageToken: string; restaurantName: string; status: MenuStatus } | null>(
+    null
+  );
 
   function onFileChange(f: File | null) {
     setFile(f);
@@ -57,6 +59,9 @@ export function UploadPage() {
             {window.location.origin}/m/{result.slug}/manage/{result.manageToken}
           </a>
         </p>
+        {result.status === 'processing' && (
+          <p className="field-hint">This was a long menu — we're still reading through the rest of it in the background. The page will fill in more items over the next minute or two.</p>
+        )}
         <button onClick={() => navigate(`/m/${result.slug}`)}>Open menu</button>
       </div>
     );

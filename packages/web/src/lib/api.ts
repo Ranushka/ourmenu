@@ -42,11 +42,14 @@ export interface MenuCategory {
   position: number;
 }
 
+export type MenuStatus = 'processing' | 'ready' | 'failed';
+
 export interface Menu {
   id: string;
   slug: string;
   restaurantName: string;
   restaurantWhatsapp: string;
+  status: MenuStatus;
   categories: MenuCategory[];
   items: MenuItem[];
 }
@@ -55,10 +58,13 @@ export const api = {
   uploadFile,
 
   createMenu: (data: { imageUrls: string[]; restaurantWhatsapp: string }) =>
-    request<{ slug: string; manageToken: string; restaurantName: string; itemCount: number }>('/api/menus', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
+    request<{ slug: string; manageToken: string; restaurantName: string; itemCount: number; status: MenuStatus }>(
+      '/api/menus',
+      {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }
+    ),
 
   getMenu: (slug: string) => request<Menu>(`/api/menus/${slug}`),
 

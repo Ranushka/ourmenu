@@ -17,17 +17,39 @@ export function ManagePage() {
   const [whatsappDraft, setWhatsappDraft] = useState('');
 
   function reload() {
-    api
+    return api
       .getManageMenu(manageToken)
       .then((m) => {
         setMenu(m);
         setNameDraft(m.restaurantName);
         setWhatsappDraft(m.restaurantWhatsapp);
+        return m;
       })
-      .catch((e) => setError(e.message));
+      .catch((e) => {
+        setError(e.message);
+        return null;
+      });
   }
 
-  useEffect(reload, [manageToken]);
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+
+    // A long menu keeps parsing after the first page-chunk -- poll for
+    // more items landing until the background parse finishes.
+    function poll() {
+      reload().then((m) => {
+        if (!cancelled && m?.status === 'processing') timer = setTimeout(poll, 5000);
+      });
+    }
+    poll();
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [manageToken]);
 
   async function toggleAvailable(itemId: string, isAvailable: boolean) {
     await api.updateItem(manageToken, itemId, { isAvailable: !isAvailable });
@@ -57,6 +79,8 @@ export function ManagePage() {
       <p className="manage-diner-link">
         Diner link (share this one): <a href={`/m/${menu.slug}`}>{window.location.origin}/m/{menu.slug}</a>
       </p>
+      {menu.status === 'processing' && <p className="field-hint">Still reading through the rest of this menu — more items will appear here shortly.</p>}
+      {menu.status === 'failed' && <p className="page-error">Some pages of this menu failed to parse. What's below is what we could read.</p>}
 
       {!editingDetails ? (
         <p className="manage-details-row">

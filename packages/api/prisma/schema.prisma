@@ -16,15 +16,25 @@ datasource db {
 // since it's the one thing that genuinely can't be derived from a URL or
 // the image itself. The manage link exists for corrections afterwards, not
 // as a gate before ordering works.
+// A menu longer than one page-chunk keeps parsing in the background after
+// creation (see packages/api/src/routes/menus.ts) -- status tracks that.
+enum MenuStatus {
+  processing // first chunk saved, later pages still being read
+  ready
+  failed // background parsing of later chunks hit an error (partial results may still exist)
+}
+
 model Menu {
-  id                 String   @id @default(cuid())
-  slug               String   @unique // used in the shareable link
+  id                 String     @id @default(cuid())
+  slug               String     @unique // used in the shareable link
   restaurantName     String // best-effort, extracted from the menu image by the parser
   restaurantWhatsapp String // E.164, e.g. +9715XXXXXXXX — order messages go here
-  manageToken        String   @unique @default(cuid()) // secret link to the manage view
+  manageToken        String     @unique @default(cuid()) // secret link to the manage view
   sourceImageUrl     String? // the uploaded menu photo/PDF this was parsed from
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  status             MenuStatus @default(ready)
+  parseError         String? // set if status is failed
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
 
   categories MenuCategory[]
   items      MenuItem[]

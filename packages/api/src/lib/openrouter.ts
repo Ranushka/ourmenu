@@ -54,37 +54,25 @@ const RETRY_DELAY_MS = 5000;
 // Free-tier vision models get unreliable well before a menu's real page
 // count (confirmed: 32 images in one call comes back empty or fails
 // outright, while 5 reliably extracts 40+ items) -- so a multi-page menu
-// is parsed in chunks of this many pages, one LLM call per chunk, merged
-// into a single result, rather than sent as one giant request.
-const PAGES_PER_CHUNK = 5;
+// is parsed in chunks of this many pages, one LLM call per chunk. Chunks
+// are parsed one at a time by the caller (see routes/menus.ts) rather
+// than all awaited here, since a menu with several chunks can take
+// minutes total -- longer than one HTTP request should reasonably hold
+// open -- so the first chunk responds to the client and the rest are
+// processed in the background.
+export const PAGES_PER_CHUNK = 5;
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function chunk<T>(items: T[], size: number): T[][] {
+export function chunkPages<T>(items: T[], size: number = PAGES_PER_CHUNK): T[][] {
   const chunks: T[][] = [];
   for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size));
   return chunks;
 }
 
-export async function parseMenuImage(imageUrls: string[]): Promise<ParsedMenu> {
-  const chunks = chunk(imageUrls, PAGES_PER_CHUNK);
-  const results: ParsedMenu[] = [];
-  // Sequential, not parallel: these are free-tier models sharing one
-  // rate-limited pool, so firing chunks in parallel would just multiply
-  // 429s rather than finish any faster.
-  for (const pages of chunks) {
-    results.push(await parseMenuImageChunk(pages));
-  }
-
-  return {
-    restaurantName: results.map((r) => r.restaurantName).find(Boolean) ?? null,
-    items: results.flatMap((r) => r.items),
-  };
-}
-
-async function parseMenuImageChunk(imageUrls: string[]): Promise<ParsedMenu> {
+export async function parseMenuImageChunk(imageUrls: string[]): Promise<ParsedMenu> {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
     throw new Error('OPENROUTER_API_KEY is not set');
