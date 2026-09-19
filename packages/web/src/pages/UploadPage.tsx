@@ -32,6 +32,12 @@ export function UploadPage({ initialWhatsapp }: { initialWhatsapp?: string } = {
     pagesRead: number | null;
   } | null>(null);
 
+  function uploadButtonLabel(p: UploadProgress | null): string {
+    if (!p) return 'Uploading…';
+    if (p.phase === 'uploading') return p.totalChunks > 1 ? `Uploading… (${p.chunksUploaded} of ${p.totalChunks})` : 'Uploading…';
+    return p.totalPages > 1 ? `Reading page ${p.pagesConverted} of ${p.totalPages}…` : 'Reading the menu…';
+  }
+
   function onFileChange(f: File | null) {
     setFile(f);
     setError(null);
@@ -115,13 +121,7 @@ export function UploadPage({ initialWhatsapp }: { initialWhatsapp?: string } = {
 
       {error && <p className="page-error">{error}</p>}
       <button disabled={busy || !file || !whatsapp} onClick={submit}>
-        {uploading
-          ? uploadProgress && uploadProgress.totalPages > 1
-            ? `Converting page ${uploadProgress.pagesConverted} of ${uploadProgress.totalPages}…`
-            : 'Uploading…'
-          : parsing
-          ? 'Reading the menu…'
-          : 'Digitize menu'}
+        {uploading ? uploadButtonLabel(uploadProgress) : parsing ? 'Reading the menu…' : 'Digitize menu'}
       </button>
     </div>
   );

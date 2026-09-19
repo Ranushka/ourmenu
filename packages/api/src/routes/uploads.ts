@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import multer from 'multer';
+import express from 'express';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import * as fs from 'fs';
@@ -9,22 +9,9 @@ import { randomUUID } from 'crypto';
 const execFileAsync = promisify(execFile);
 
 export const UPLOADS_DIR = process.env.UPLOADS_DIR || path.join(__dirname, '../uploads');
+const CHUNKS_DIR = path.join(UPLOADS_DIR, '.chunks');
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-
-const upload = multer({
-  storage: multer.diskStorage({
-    destination: UPLOADS_DIR,
-    filename: (_req, file, cb) => {
-      const ext = path.extname(file.originalname) || guessExt(file.mimetype);
-      cb(null, `${randomUUID()}${ext}`);
-    },
-  }),
-  limits: { fileSize: 20 * 1024 * 1024 }, // 20MB
-  fileFilter: (_req, file, cb) => {
-    const ok = file.mimetype.startsWith('image/') || file.mimetype === 'application/pdf';
-    cb(ok ? null : new Error('Only images or PDFs are accepted'), ok);
-  },
-});
+fs.mkdirSync(CHUNKS_DIR, { recursive: true });
 
 function guessExt(mimetype: string): string {
   if (mimetype === 'application/pdf') return '.pdf';
@@ -40,6 +27,138 @@ export const uploadsRouter = Router();
 // gets silently dropped. Capped to keep a single upload's LLM request
 // (and pdftoppm's own work) bounded.
 const MAX_PDF_PAGES = 40;
+const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
+
+// ---------------------------------------------------------------------
+// Chunked upload: a single multipart POST of a large file is what was
+// timing out at Cloudflare's edge (~60-100s) on a slow connection --
+// that timeout is on the request body finishing upload, so it happens
+// regardless of how fast this server is. Splitting the file into small
+// chunks client-side (each well under any such timeout) and uploading
+// them one at a time, then assembling server-side, sidesteps that
+// entirely: no single request is ever large or slow enough to hit it.
+// ---------------------------------------------------------------------
+
+interface UploadSession {
+  filename: string; // final on-disk name (random + real extension)
+  mimetype: string;
+  totalChunks: number;
+  receivedChunks: Set<number>;
+}
+
+const sessionsById = new Map<string, UploadSession>();
+const SESSION_TTL_MS = 30 * 60 * 1000;
+
+function guardedSession(id: string, res: import('express').Response): UploadSession | null {
+  const session = sessionsById.get(id);
+  if (!session) {
+    res.status(404).json({ error: 'Upload session not found or expired' });
+    return null;
+  }
+  return session;
+}
+
+/** Starts a chunked upload: pass the file's name, mimetype, size and how many chunks it'll be split into. */
+uploadsRouter.post('/init', (req, res) => {
+  const { filename, mimetype, size, totalChunks } = req.body as {
+    filename?: string;
+    mimetype?: string;
+    size?: number;
+    totalChunks?: number;
+  };
+
+  if (!mimetype || !totalChunks || !size) {
+    return res.status(400).json({ error: 'mimetype, size and totalChunks are required' });
+  }
+  if (!mimetype.startsWith('image/') && mimetype !== 'application/pdf') {
+    return res.status(400).json({ error: 'Only images or PDFs are accepted' });
+  }
+  if (size > MAX_FILE_SIZE) {
+    return res.status(400).json({ error: `File too large (max ${MAX_FILE_SIZE / 1024 / 1024}MB)` });
+  }
+
+  const id = randomUUID();
+  const ext = path.extname(filename || '') || guessExt(mimetype);
+  fs.mkdirSync(path.join(CHUNKS_DIR, id), { recursive: true });
+  sessionsById.set(id, { filename: `${randomUUID()}${ext}`, mimetype, totalChunks, receivedChunks: new Set() });
+  setTimeout(() => {
+    sessionsById.delete(id);
+    fs.rmSync(path.join(CHUNKS_DIR, id), { recursive: true, force: true });
+  }, SESSION_TTL_MS);
+
+  res.status(201).json({ sessionId: id });
+});
+
+/** Uploads one chunk (raw binary body) of an in-progress session. */
+uploadsRouter.post('/:sessionId/chunk/:index', express.raw({ type: '*/*', limit: '2mb' }), (req, res) => {
+  const session = guardedSession(req.params.sessionId, res);
+  if (!session) return;
+
+  const index = parseInt(req.params.index, 10);
+  if (!Number.isInteger(index) || index < 0 || index >= session.totalChunks) {
+    return res.status(400).json({ error: 'Invalid chunk index' });
+  }
+
+  fs.writeFileSync(path.join(CHUNKS_DIR, req.params.sessionId, `${index}.part`), req.body as Buffer);
+  session.receivedChunks.add(index);
+  res.status(204).end();
+});
+
+/** All chunks in; assemble the file and kick off the same handling a direct upload would get. */
+uploadsRouter.post('/:sessionId/complete', async (req, res) => {
+  const session = guardedSession(req.params.sessionId, res);
+  if (!session) return;
+
+  if (session.receivedChunks.size !== session.totalChunks) {
+    return res.status(400).json({ error: `Missing chunks: received ${session.receivedChunks.size} of ${session.totalChunks}` });
+  }
+
+  const chunkDir = path.join(CHUNKS_DIR, req.params.sessionId);
+  const finalPath = path.join(UPLOADS_DIR, session.filename);
+
+  try {
+    await assembleChunks(chunkDir, finalPath, session.totalChunks);
+  } catch (err) {
+    return res.status(500).json({ error: `Could not assemble upload: ${(err as Error).message}` });
+  } finally {
+    fs.rmSync(chunkDir, { recursive: true, force: true });
+    sessionsById.delete(req.params.sessionId);
+  }
+
+  await handleUploadedFile(finalPath, session.mimetype, res);
+});
+
+function assembleChunks(chunkDir: string, finalPath: string, totalChunks: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const out = fs.createWriteStream(finalPath);
+    out.on('error', reject);
+    out.on('finish', resolve);
+
+    (async () => {
+      try {
+        for (let i = 0; i < totalChunks; i++) {
+          const buf = fs.readFileSync(path.join(chunkDir, `${i}.part`));
+          if (!out.write(buf)) await new Promise((r) => out.once('drain', r));
+        }
+        out.end();
+      } catch (err) {
+        reject(err);
+      }
+    })();
+  });
+}
+
+// ---------------------------------------------------------------------
+// Conversion: a single image responds immediately. A PDF is rendered
+// page-by-page to PNG (via poppler's pdftoppm, up to MAX_PDF_PAGES)
+// since vision LLMs expect images, not a PDF, in the image_url field --
+// every rendered page is later sent to the parser as a separate image,
+// so items aren't missed just because they're not on page 1. Converting
+// one page at a time (instead of one pdftoppm call for the whole range)
+// is what makes per-page progress possible: this responds immediately
+// (202) with a token to poll via GET /:id while conversion continues in
+// the background.
+// ---------------------------------------------------------------------
 
 interface ConversionProgress {
   totalPages: number;
@@ -49,43 +168,23 @@ interface ConversionProgress {
   urls?: string[];
 }
 
-// In-memory only: a conversion is a few minutes of one server's own work,
-// not something that needs to survive a restart or be visible cross-
-// instance. Cleaned up a while after finishing so a client has time to
-// pick up the final result even if its last poll landed right at "done".
 const progressById = new Map<string, ConversionProgress>();
 const PROGRESS_TTL_MS = 10 * 60 * 1000;
 
-/**
- * Accepts a menu photo OR a PDF picked from the device's own files. A
- * single image converts and responds immediately (201). A PDF is
- * rendered page-by-page to PNG server-side (via poppler's pdftoppm, up
- * to MAX_PDF_PAGES) since vision LLMs expect images, not a PDF, in the
- * image_url field -- every rendered page is later sent to the parser as
- * a separate image, so items aren't missed just because they're not on
- * page 1. Converting one page at a time (instead of one pdftoppm call
- * for the whole range) is what makes per-page progress possible: this
- * responds immediately (202) with a token to poll via GET /:id while
- * conversion continues in the background.
- */
-uploadsRouter.post('/', upload.single('file'), async (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-
+async function handleUploadedFile(filePath: string, mimetype: string, res: import('express').Response) {
   const publicApiUrl = process.env.PUBLIC_API_URL || `http://localhost:${process.env.PORT || 3333}`;
 
-  if (req.file.mimetype !== 'application/pdf') {
-    return res.status(201).json({ urls: [`${publicApiUrl}/uploads/${req.file.filename}`] });
+  if (mimetype !== 'application/pdf') {
+    return res.status(201).json({ urls: [`${publicApiUrl}/uploads/${path.basename(filePath)}`] });
   }
-
-  const pdfPath = path.join(UPLOADS_DIR, req.file.filename);
 
   let totalPages: number;
   try {
-    const { stdout } = await execFileAsync('pdfinfo', [pdfPath]);
+    const { stdout } = await execFileAsync('pdfinfo', [filePath]);
     const match = stdout.match(/^Pages:\s+(\d+)/m);
     totalPages = Math.min(match ? parseInt(match[1], 10) : MAX_PDF_PAGES, MAX_PDF_PAGES);
   } catch (err) {
-    fs.unlinkSync(pdfPath);
+    fs.unlinkSync(filePath);
     return res.status(500).json({ error: `Could not read the PDF: ${(err as Error).message}` });
   }
 
@@ -93,13 +192,13 @@ uploadsRouter.post('/', upload.single('file'), async (req, res) => {
   progressById.set(id, { totalPages, pagesConverted: 0, done: false });
   res.status(202).json({ conversionId: id, totalPages });
 
-  convertPdfPages(id, pdfPath, totalPages, publicApiUrl).catch((err) => {
+  convertPdfPages(id, filePath, totalPages, publicApiUrl).catch((err) => {
     progressById.set(id, { totalPages, pagesConverted: 0, done: true, error: (err as Error).message });
-    scheduleCleanup(id);
+    scheduleProgressCleanup(id);
   });
-});
+}
 
-/** Poll this while a PDF conversion (POST above) is running. */
+/** Poll this while a PDF conversion is running. */
 uploadsRouter.get('/:id', (req, res) => {
   const progress = progressById.get(req.params.id);
   if (!progress) return res.status(404).json({ error: 'Not found or expired' });
@@ -125,9 +224,9 @@ async function convertPdfPages(id: string, pdfPath: string, totalPages: number, 
 
   fs.unlinkSync(pdfPath);
   progressById.set(id, { totalPages, pagesConverted: totalPages, done: true, urls });
-  scheduleCleanup(id);
+  scheduleProgressCleanup(id);
 }
 
-function scheduleCleanup(id: string) {
+function scheduleProgressCleanup(id: string) {
   setTimeout(() => progressById.delete(id), PROGRESS_TTL_MS);
 }
