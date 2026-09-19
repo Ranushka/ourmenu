@@ -54,19 +54,34 @@ async function appendItems(menuId: string, rawItems: ParsedMenuItem[]): Promise<
   return items.length;
 }
 
-/** Parses remaining page-chunks one at a time and appends their items, marking the menu ready/failed when done. Not awaited by the request handler -- runs after the response has already gone out. */
+/** Parses remaining page-chunks one at a time and appends their items, marking the menu ready when done. Not awaited by the request handler -- runs after the response has already gone out. */
 async function processRemainingChunks(menuId: string, chunks: string[][]) {
-  try {
-    for (const pages of chunks) {
+  // One chunk exhausting its retries (a page or two of a 30-page menu
+  // hitting a stubborn timeout) shouldn't cost every chunk after it --
+  // keep going and surface which ones failed rather than abandoning the
+  // rest of a menu that's otherwise parsing fine.
+  const chunkErrors: string[] = [];
+  for (const pages of chunks) {
+    try {
       const parsed = await parseMenuImageChunk(pages);
       await appendItems(menuId, parsed.items);
+    } catch (err) {
+      chunkErrors.push((err as Error).message);
     }
-    await prisma.menu.update({ where: { id: menuId }, data: { status: 'ready' } });
-  } catch (err) {
-    await prisma.menu
-      .update({ where: { id: menuId }, data: { status: 'failed', parseError: (err as Error).message } })
-      .catch((updateErr) => console.error(`Menu ${menuId}: failed to record parse failure`, updateErr));
   }
+
+  await prisma.menu
+    .update({
+      where: { id: menuId },
+      data: {
+        status: 'ready',
+        parseError:
+          chunkErrors.length > 0
+            ? `${chunkErrors.length}/${chunks.length} page-chunk(s) failed to parse: ${chunkErrors[0]}`
+            : null,
+      },
+    })
+    .catch((updateErr) => console.error(`Menu ${menuId}: failed to finalize status`, updateErr));
 }
 
 /**

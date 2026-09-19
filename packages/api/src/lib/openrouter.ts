@@ -115,7 +115,10 @@ export async function parseMenuImageChunk(imageUrls: string[]): Promise<ParsedMe
 
     const body = await res.text();
     lastError = new Error(`OpenRouter request failed (${res.status}): ${body}`);
-    const retryable = res.status === 429 || res.status === 503;
+    // 429/503 = rate-limited/overloaded upstream; 502/504/524 = the proxy
+    // (Cloudflare, in front of a self-hosted 9router) gave up waiting on a
+    // slow free-tier model -- all transient, worth another attempt.
+    const retryable = [429, 502, 503, 504, 524].includes(res.status);
     if (!retryable || attempt === MAX_ATTEMPTS) throw lastError;
     await sleep(RETRY_DELAY_MS);
   }

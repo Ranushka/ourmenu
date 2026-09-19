@@ -50,6 +50,7 @@ export interface Menu {
   restaurantName: string;
   restaurantWhatsapp: string;
   status: MenuStatus;
+  parseError?: string | null;
   categories: MenuCategory[];
   items: MenuItem[];
 }

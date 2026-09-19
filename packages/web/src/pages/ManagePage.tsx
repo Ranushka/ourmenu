@@ -81,6 +81,9 @@ export function ManagePage() {
       </p>
       {menu.status === 'processing' && <p className="field-hint">Still reading through the rest of this menu — more items will appear here shortly.</p>}
       {menu.status === 'failed' && <p className="page-error">Some pages of this menu failed to parse. What's below is what we could read.</p>}
+      {menu.status === 'ready' && menu.parseError && (
+        <p className="page-error">A couple of pages didn't parse cleanly — what's below is what we could read from the rest.</p>
+      )}
 
       {!editingDetails ? (
         <p className="manage-details-row">
