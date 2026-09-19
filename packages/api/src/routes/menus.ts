@@ -62,12 +62,13 @@ async function appendItems(menuId: string, rawItems: ParsedMenuItem[]): Promise<
 }
 
 /** Parses remaining page-chunks one at a time and appends their items, marking the menu ready when done. Not awaited by the request handler -- runs after the response has already gone out. */
-async function processRemainingChunks(menuId: string, chunks: string[][]) {
+async function processRemainingChunks(menuId: string, chunks: string[][], pagesReadSoFar: number) {
   // One chunk exhausting its retries (a page or two of a 30-page menu
   // hitting a stubborn timeout) shouldn't cost every chunk after it --
   // keep going and surface which ones failed rather than abandoning the
   // rest of a menu that's otherwise parsing fine.
   const chunkErrors: string[] = [];
+  let pagesRead = pagesReadSoFar;
   for (const pages of chunks) {
     try {
       const parsed = await parseMenuImageChunk(pages);
@@ -75,6 +76,11 @@ async function processRemainingChunks(menuId: string, chunks: string[][]) {
     } catch (err) {
       chunkErrors.push((err as Error).message);
     }
+    pagesRead += pages.length;
+    // Updated after every chunk (not just at the end) so a client
+    // polling for progress sees "page X of Y" advance as each chunk
+    // actually finishes, not just a final jump to done.
+    await prisma.menu.update({ where: { id: menuId }, data: { pagesRead } }).catch(() => {});
   }
 
   await prisma.menu
@@ -130,27 +136,22 @@ menusRouter.post('/', async (req, res) => {
     // fall back to a suffixed slug rather than failing the whole upload.
     // Not a fix for the number being guessable in the first place, just
     // for two menus wanting the same one.
+    const baseData = {
+      restaurantName,
+      restaurantWhatsapp,
+      sourceImageUrl: imageUrls[0],
+      status: (restChunks.length > 0 ? 'processing' : 'ready') as 'processing' | 'ready',
+      totalPages: imageUrls.length,
+      pagesRead: firstChunk.length,
+    };
+
     let menu;
     try {
-      menu = await prisma.menu.create({
-        data: {
-          slug: slugify(restaurantWhatsapp),
-          restaurantName,
-          restaurantWhatsapp,
-          sourceImageUrl: imageUrls[0],
-          status: restChunks.length > 0 ? 'processing' : 'ready',
-        },
-      });
+      menu = await prisma.menu.create({ data: { slug: slugify(restaurantWhatsapp), ...baseData } });
     } catch (err) {
       if ((err as { code?: string }).code !== 'P2002') throw err;
       menu = await prisma.menu.create({
-        data: {
-          slug: `${slugify(restaurantWhatsapp)}-${Math.random().toString(36).slice(2, 7)}`,
-          restaurantName,
-          restaurantWhatsapp,
-          sourceImageUrl: imageUrls[0],
-          status: restChunks.length > 0 ? 'processing' : 'ready',
-        },
+        data: { slug: `${slugify(restaurantWhatsapp)}-${Math.random().toString(36).slice(2, 7)}`, ...baseData },
       });
     }
 
@@ -162,10 +163,12 @@ menusRouter.post('/', async (req, res) => {
       restaurantName: menu.restaurantName,
       itemCount,
       status: menu.status,
+      totalPages: menu.totalPages,
+      pagesRead: menu.pagesRead,
     });
 
     if (restChunks.length > 0) {
-      processRemainingChunks(menu.id, restChunks);
+      processRemainingChunks(menu.id, restChunks, firstChunk.length);
     }
   } catch (err) {
     res.status(500).json({ error: `Could not save the menu: ${(err as Error).message}` });

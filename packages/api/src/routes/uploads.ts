@@ -41,44 +41,93 @@ export const uploadsRouter = Router();
 // (and pdftoppm's own work) bounded.
 const MAX_PDF_PAGES = 40;
 
+interface ConversionProgress {
+  totalPages: number;
+  pagesConverted: number;
+  done: boolean;
+  error?: string;
+  urls?: string[];
+}
+
+// In-memory only: a conversion is a few minutes of one server's own work,
+// not something that needs to survive a restart or be visible cross-
+// instance. Cleaned up a while after finishing so a client has time to
+// pick up the final result even if its last poll landed right at "done".
+const progressById = new Map<string, ConversionProgress>();
+const PROGRESS_TTL_MS = 10 * 60 * 1000;
+
 /**
  * Accepts a menu photo OR a PDF picked from the device's own files. A
- * PDF is rendered page-by-page to PNG server-side (via poppler's
- * pdftoppm, up to MAX_PDF_PAGES) since vision LLMs expect images, not a
- * PDF, in the image_url field -- every rendered page is sent to the
- * parser as a separate image in one request, so items aren't missed
- * just because they're not on page 1.
+ * single image converts and responds immediately (201). A PDF is
+ * rendered page-by-page to PNG server-side (via poppler's pdftoppm, up
+ * to MAX_PDF_PAGES) since vision LLMs expect images, not a PDF, in the
+ * image_url field -- every rendered page is later sent to the parser as
+ * a separate image, so items aren't missed just because they're not on
+ * page 1. Converting one page at a time (instead of one pdftoppm call
+ * for the whole range) is what makes per-page progress possible: this
+ * responds immediately (202) with a token to poll via GET /:id while
+ * conversion continues in the background.
  */
 uploadsRouter.post('/', upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
   const publicApiUrl = process.env.PUBLIC_API_URL || `http://localhost:${process.env.PORT || 3333}`;
-  let filenames = [req.file.filename];
 
-  if (req.file.mimetype === 'application/pdf') {
-    const pdfPath = path.join(UPLOADS_DIR, req.file.filename);
-    const outputBase = path.join(UPLOADS_DIR, randomUUID());
-    try {
-      await execFileAsync('pdftoppm', ['-png', '-f', '1', '-l', String(MAX_PDF_PAGES), '-r', '200', pdfPath, outputBase]);
-      fs.unlinkSync(pdfPath);
-      // pdftoppm appends a page-number suffix whose zero-padding isn't
-      // fixed (depends on the poppler version and page count) -- read
-      // back whatever it actually produced rather than assuming the
-      // suffix format, and sort by the numeric page number since that
-      // padding also affects lexical sort order.
-      const outputName = path.basename(outputBase);
-      const produced = fs
-        .readdirSync(UPLOADS_DIR)
-        .filter((f) => f.startsWith(outputName) && f.endsWith('.png'))
-        .map((f) => ({ f, page: parseInt(f.slice(outputName.length + 1, -'.png'.length), 10) }))
-        .sort((a, b) => a.page - b.page)
-        .map(({ f }) => f);
-      if (produced.length === 0) throw new Error('pdftoppm did not produce an output file');
-      filenames = produced;
-    } catch (err) {
-      return res.status(500).json({ error: `Could not read the PDF: ${(err as Error).message}` });
-    }
+  if (req.file.mimetype !== 'application/pdf') {
+    return res.status(201).json({ urls: [`${publicApiUrl}/uploads/${req.file.filename}`] });
   }
 
-  res.status(201).json({ urls: filenames.map((f) => `${publicApiUrl}/uploads/${f}`) });
+  const pdfPath = path.join(UPLOADS_DIR, req.file.filename);
+
+  let totalPages: number;
+  try {
+    const { stdout } = await execFileAsync('pdfinfo', [pdfPath]);
+    const match = stdout.match(/^Pages:\s+(\d+)/m);
+    totalPages = Math.min(match ? parseInt(match[1], 10) : MAX_PDF_PAGES, MAX_PDF_PAGES);
+  } catch (err) {
+    fs.unlinkSync(pdfPath);
+    return res.status(500).json({ error: `Could not read the PDF: ${(err as Error).message}` });
+  }
+
+  const id = randomUUID();
+  progressById.set(id, { totalPages, pagesConverted: 0, done: false });
+  res.status(202).json({ conversionId: id, totalPages });
+
+  convertPdfPages(id, pdfPath, totalPages, publicApiUrl).catch((err) => {
+    progressById.set(id, { totalPages, pagesConverted: 0, done: true, error: (err as Error).message });
+    scheduleCleanup(id);
+  });
 });
+
+/** Poll this while a PDF conversion (POST above) is running. */
+uploadsRouter.get('/:id', (req, res) => {
+  const progress = progressById.get(req.params.id);
+  if (!progress) return res.status(404).json({ error: 'Not found or expired' });
+  res.json(progress);
+});
+
+async function convertPdfPages(id: string, pdfPath: string, totalPages: number, publicApiUrl: string) {
+  const urls: string[] = [];
+
+  for (let page = 1; page <= totalPages; page++) {
+    const outputBase = path.join(UPLOADS_DIR, randomUUID());
+    await execFileAsync('pdftoppm', ['-png', '-f', String(page), '-l', String(page), '-r', '200', pdfPath, outputBase]);
+
+    // pdftoppm appends a page-number suffix whose zero-padding isn't
+    // fixed (depends on the poppler version) -- read back whatever it
+    // actually produced rather than assuming the suffix format.
+    const outputName = path.basename(outputBase);
+    const produced = fs.readdirSync(UPLOADS_DIR).find((f) => f.startsWith(outputName) && f.endsWith('.png'));
+    if (produced) urls.push(`${publicApiUrl}/uploads/${produced}`);
+
+    progressById.set(id, { totalPages, pagesConverted: page, done: false });
+  }
+
+  fs.unlinkSync(pdfPath);
+  progressById.set(id, { totalPages, pagesConverted: totalPages, done: true, urls });
+  scheduleCleanup(id);
+}
+
+function scheduleCleanup(id: string) {
+  setTimeout(() => progressById.delete(id), PROGRESS_TTL_MS);
+}

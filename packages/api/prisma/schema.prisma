@@ -33,6 +33,8 @@ model Menu {
   sourceImageUrl     String? // the uploaded menu photo/PDF this was parsed from
   status             MenuStatus @default(ready)
   parseError         String? // set if status is failed
+  totalPages         Int? // pages in the source upload, for "reading page X of Y" progress
+  pagesRead          Int? // pages parsed so far (advances a page-chunk at a time)
   createdAt          DateTime   @default(now())
   updatedAt          DateTime   @updatedAt
 

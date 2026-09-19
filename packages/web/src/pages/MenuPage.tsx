@@ -114,7 +114,11 @@ export function MenuPage() {
     <div className="menu-page">
       <header className="menu-header">
         <h1>{menu.restaurantName}</h1>
-        {menu.status === 'processing' && <p className="field-hint">Still reading through the rest of this menu — more items may appear shortly.</p>}
+        {menu.status === 'processing' && (
+          <p className="field-hint">
+            Still reading through this menu{menu.totalPages ? ` — page ${menu.pagesRead ?? 0} of ${menu.totalPages}` : ''} — more items may appear shortly.
+          </p>
+        )}
         <div className="menu-controls">
           <input
             className="search-input"

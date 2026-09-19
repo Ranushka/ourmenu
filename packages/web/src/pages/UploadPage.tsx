@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api, MenuStatus } from '../lib/api';
+import { api, MenuStatus, UploadProgress } from '../lib/api';
 
 /**
  * Anyone can land here — a diner tired of an unsearchable paper menu, or a
@@ -20,11 +20,17 @@ export function UploadPage({ initialWhatsapp }: { initialWhatsapp?: string } = {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [whatsapp, setWhatsapp] = useState(initialWhatsapp ?? '');
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
   const [parsing, setParsing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<{ slug: string; manageToken: string; restaurantName: string; status: MenuStatus } | null>(
-    null
-  );
+  const [result, setResult] = useState<{
+    slug: string;
+    manageToken: string;
+    restaurantName: string;
+    status: MenuStatus;
+    totalPages: number | null;
+    pagesRead: number | null;
+  } | null>(null);
 
   function onFileChange(f: File | null) {
     setFile(f);
@@ -36,9 +42,10 @@ export function UploadPage({ initialWhatsapp }: { initialWhatsapp?: string } = {
   async function submit() {
     if (!file) return;
     setError(null);
+    setUploadProgress(null);
     setUploading(true);
     try {
-      const { urls: imageUrls } = await api.uploadFile(file);
+      const { urls: imageUrls } = await api.uploadFile(file, setUploadProgress);
       setUploading(false);
       setParsing(true);
       const res = await api.createMenu({ imageUrls, restaurantWhatsapp: whatsapp });
@@ -65,7 +72,10 @@ export function UploadPage({ initialWhatsapp }: { initialWhatsapp?: string } = {
           </a>
         </p>
         {result.status === 'processing' && (
-          <p className="field-hint">This was a long menu — we're still reading through the rest of it in the background. The page will fill in more items over the next minute or two.</p>
+          <p className="field-hint">
+            This was a long menu ({result.pagesRead} of {result.totalPages} pages read so far) — we're still reading
+            through the rest of it in the background. The page will fill in more items over the next minute or two.
+          </p>
         )}
         <button onClick={() => navigate(`/m/${result.slug}`)}>Open menu</button>
       </div>
@@ -105,7 +115,13 @@ export function UploadPage({ initialWhatsapp }: { initialWhatsapp?: string } = {
 
       {error && <p className="page-error">{error}</p>}
       <button disabled={busy || !file || !whatsapp} onClick={submit}>
-        {uploading ? 'Uploading…' : parsing ? 'Reading the menu…' : 'Digitize menu'}
+        {uploading
+          ? uploadProgress && uploadProgress.totalPages > 1
+            ? `Converting page ${uploadProgress.pagesConverted} of ${uploadProgress.totalPages}…`
+            : 'Uploading…'
+          : parsing
+          ? 'Reading the menu…'
+          : 'Digitize menu'}
       </button>
     </div>
   );
