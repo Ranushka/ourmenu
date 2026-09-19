@@ -53,7 +53,14 @@ uploadsRouter.post('/', upload.single('file'), async (req, res) => {
       // First page only, at a resolution good enough for menu text.
       await execFileAsync('pdftoppm', ['-png', '-f', '1', '-l', '1', '-r', '200', pdfPath, outputBase]);
       fs.unlinkSync(pdfPath);
-      filename = `${path.basename(outputBase)}-1.png`;
+      // pdftoppm appends a zero-padded page number (e.g. "-01.png", not
+      // "-1.png" -- the padding width isn't fixed, it depends on the
+      // poppler version) -- find whatever it actually produced rather
+      // than assuming the suffix format.
+      const outputName = path.basename(outputBase);
+      const produced = fs.readdirSync(UPLOADS_DIR).find((f) => f.startsWith(outputName) && f.endsWith('.png'));
+      if (!produced) throw new Error('pdftoppm did not produce an output file');
+      filename = produced;
     } catch (err) {
       return res.status(500).json({ error: `Could not read the PDF: ${(err as Error).message}` });
     }
