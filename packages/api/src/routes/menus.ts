@@ -34,41 +34,53 @@ menusRouter.post('/', async (req, res) => {
   }
 
   const restaurantName = parsed.restaurantName?.trim() || 'Menu';
-  const categoryNames = [...new Set(parsed.items.map((i) => i.category).filter(Boolean))] as string[];
+  // A model occasionally returns an item with no usable price (e.g. a
+  // "market price" line, or a mis-read row) -- price is a required
+  // column, so an item like that would otherwise crash the whole
+  // createMany and lose every other item in the menu. Drop just that
+  // item instead of failing the entire upload over one bad row.
+  const items = parsed.items.filter((item) => item.name && typeof item.price === 'number' && Number.isFinite(item.price));
+  const categoryNames = [...new Set(items.map((i) => i.category).filter(Boolean))] as string[];
 
-  const menu = await prisma.menu.create({
-    data: {
-      slug: slugify(restaurantName),
-      restaurantName,
-      restaurantWhatsapp,
-      sourceImageUrl: imageUrls[0],
-      categories: {
-        create: categoryNames.map((name, position) => ({ name, position })),
+  try {
+    const menu = await prisma.menu.create({
+      data: {
+        slug: slugify(restaurantName),
+        restaurantName,
+        restaurantWhatsapp,
+        sourceImageUrl: imageUrls[0],
+        categories: {
+          create: categoryNames.map((name, position) => ({ name, position })),
+        },
       },
-    },
-    include: { categories: true },
-  });
+      include: { categories: true },
+    });
 
-  const categoryIdByName = new Map(menu.categories.map((c) => [c.name, c.id]));
+    const categoryIdByName = new Map(menu.categories.map((c) => [c.name, c.id]));
 
-  await prisma.menuItem.createMany({
-    data: parsed.items.map((item, position) => ({
-      menuId: menu.id,
-      categoryId: item.category ? categoryIdByName.get(item.category) : undefined,
-      name: item.name,
-      description: item.description || undefined,
-      price: item.price,
-      isVeg: item.isVeg ?? null,
-      position,
-    })),
-  });
+    if (items.length > 0) {
+      await prisma.menuItem.createMany({
+        data: items.map((item, position) => ({
+          menuId: menu.id,
+          categoryId: item.category ? categoryIdByName.get(item.category) : undefined,
+          name: item.name,
+          description: item.description || undefined,
+          price: item.price,
+          isVeg: item.isVeg ?? null,
+          position,
+        })),
+      });
+    }
 
-  res.status(201).json({
-    slug: menu.slug,
-    manageToken: menu.manageToken,
-    restaurantName: menu.restaurantName,
-    itemCount: parsed.items.length,
-  });
+    res.status(201).json({
+      slug: menu.slug,
+      manageToken: menu.manageToken,
+      restaurantName: menu.restaurantName,
+      itemCount: items.length,
+    });
+  } catch (err) {
+    res.status(500).json({ error: `Could not save the menu: ${(err as Error).message}` });
+  }
 });
 
 /** Public menu view — no auth, this is the link shared over WhatsApp. */

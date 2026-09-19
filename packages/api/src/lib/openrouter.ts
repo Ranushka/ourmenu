@@ -44,48 +44,68 @@ Return ONLY a JSON object (no markdown fences, no commentary) shaped like:
 - Skip section headings, prices-only lines, and non-item text from "items".
 - A menu is often several pages (e.g. a cover page, then item pages) -- items can appear on any page given, not just the first; combine them all into one "items" list.`;
 
+// A "Fallback" combo (e.g. on a self-hosted 9router) picks one model per
+// request rather than retrying other models within a single call -- if
+// that model is rate-limited, the request just fails. Retrying the whole
+// request gives it another chance to land on a model that isn't.
+const MAX_ATTEMPTS = 3;
+const RETRY_DELAY_MS = 5000;
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export async function parseMenuImage(imageUrls: string[]): Promise<ParsedMenu> {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
     throw new Error('OPENROUTER_API_KEY is not set');
   }
 
-  const res = await fetch(OPENROUTER_URL, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: DEFAULT_MODEL,
-      // Explicit: a proxy in front of OpenRouter (e.g. 9router) can default
-      // to a streaming-shaped response when this is omitted, which breaks
-      // res.json() below.
-      stream: false,
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text:
-                imageUrls.length > 1
-                  ? `Extract the restaurant name and menu items from these ${imageUrls.length} menu pages as JSON.`
-                  : 'Extract the restaurant name and menu items from this photo as JSON.',
-            },
-            ...imageUrls.map((url) => ({ type: 'image_url' as const, image_url: { url } })),
-          ],
-        },
-      ],
-    }),
-  });
+  let lastError: Error | undefined;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const res = await fetch(OPENROUTER_URL, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: DEFAULT_MODEL,
+        // Explicit: a proxy in front of OpenRouter (e.g. 9router) can default
+        // to a streaming-shaped response when this is omitted, which breaks
+        // res.json() below.
+        stream: false,
+        messages: [
+          { role: 'system', content: SYSTEM_PROMPT },
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text:
+                  imageUrls.length > 1
+                    ? `Extract the restaurant name and menu items from these ${imageUrls.length} menu pages as JSON.`
+                    : 'Extract the restaurant name and menu items from this photo as JSON.',
+              },
+              ...imageUrls.map((url) => ({ type: 'image_url' as const, image_url: { url } })),
+            ],
+          },
+        ],
+      }),
+    });
 
-  if (!res.ok) {
+    if (res.ok) return await parseResponse(res);
+
     const body = await res.text();
-    throw new Error(`OpenRouter request failed (${res.status}): ${body}`);
+    lastError = new Error(`OpenRouter request failed (${res.status}): ${body}`);
+    const retryable = res.status === 429 || res.status === 503;
+    if (!retryable || attempt === MAX_ATTEMPTS) throw lastError;
+    await sleep(RETRY_DELAY_MS);
   }
+  throw lastError;
+}
 
+async function parseResponse(res: Response): Promise<ParsedMenu> {
   const data = await res.json();
   const content: string = data?.choices?.[0]?.message?.content ?? '{}';
   const jsonText = content.trim().replace(/^```(json)?/i, '').replace(/```$/, '').trim();
