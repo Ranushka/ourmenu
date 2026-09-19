@@ -17,18 +17,18 @@ function slugify(name: string): string {
  * a URL or the image, so it's the one thing asked for up front.
  */
 menusRouter.post('/', async (req, res) => {
-  const { imageUrl, restaurantWhatsapp } = req.body as {
-    imageUrl?: string;
+  const { imageUrls, restaurantWhatsapp } = req.body as {
+    imageUrls?: string[];
     restaurantWhatsapp?: string;
   };
 
-  if (!imageUrl || !restaurantWhatsapp) {
-    return res.status(400).json({ error: 'imageUrl and restaurantWhatsapp are required' });
+  if (!imageUrls?.length || !restaurantWhatsapp) {
+    return res.status(400).json({ error: 'imageUrls and restaurantWhatsapp are required' });
   }
 
   let parsed;
   try {
-    parsed = await parseMenuImage(imageUrl);
+    parsed = await parseMenuImage(imageUrls);
   } catch (err) {
     return res.status(502).json({ error: `Menu parsing failed: ${(err as Error).message}` });
   }
@@ -41,7 +41,7 @@ menusRouter.post('/', async (req, res) => {
       slug: slugify(restaurantName),
       restaurantName,
       restaurantWhatsapp,
-      sourceImageUrl: imageUrl,
+      sourceImageUrl: imageUrls[0],
       categories: {
         create: categoryNames.map((name, position) => ({ name, position })),
       },

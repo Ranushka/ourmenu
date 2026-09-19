@@ -35,37 +35,50 @@ function guessExt(mimetype: string): string {
 
 export const uploadsRouter = Router();
 
+// Multi-page menu PDFs are common (a cover page, then several pages of
+// items) -- convert up to this many pages so nothing past a short cover
+// gets silently dropped. Capped to keep a single upload's LLM request
+// (and pdftoppm's own work) bounded.
+const MAX_PDF_PAGES = 40;
+
 /**
- * Accepts a menu photo OR a PDF picked from the device's own files.
- * A PDF's first page is rendered to PNG server-side (via poppler's
- * pdftoppm) since vision LLMs expect an image, not a PDF, in the
- * image_url field.
+ * Accepts a menu photo OR a PDF picked from the device's own files. A
+ * PDF is rendered page-by-page to PNG server-side (via poppler's
+ * pdftoppm, up to MAX_PDF_PAGES) since vision LLMs expect images, not a
+ * PDF, in the image_url field -- every rendered page is sent to the
+ * parser as a separate image in one request, so items aren't missed
+ * just because they're not on page 1.
  */
 uploadsRouter.post('/', upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
-  let filename = req.file.filename;
+  const publicApiUrl = process.env.PUBLIC_API_URL || `http://localhost:${process.env.PORT || 3333}`;
+  let filenames = [req.file.filename];
 
   if (req.file.mimetype === 'application/pdf') {
-    const pdfPath = path.join(UPLOADS_DIR, filename);
+    const pdfPath = path.join(UPLOADS_DIR, req.file.filename);
     const outputBase = path.join(UPLOADS_DIR, randomUUID());
     try {
-      // First page only, at a resolution good enough for menu text.
-      await execFileAsync('pdftoppm', ['-png', '-f', '1', '-l', '1', '-r', '200', pdfPath, outputBase]);
+      await execFileAsync('pdftoppm', ['-png', '-f', '1', '-l', String(MAX_PDF_PAGES), '-r', '200', pdfPath, outputBase]);
       fs.unlinkSync(pdfPath);
-      // pdftoppm appends a zero-padded page number (e.g. "-01.png", not
-      // "-1.png" -- the padding width isn't fixed, it depends on the
-      // poppler version) -- find whatever it actually produced rather
-      // than assuming the suffix format.
+      // pdftoppm appends a page-number suffix whose zero-padding isn't
+      // fixed (depends on the poppler version and page count) -- read
+      // back whatever it actually produced rather than assuming the
+      // suffix format, and sort by the numeric page number since that
+      // padding also affects lexical sort order.
       const outputName = path.basename(outputBase);
-      const produced = fs.readdirSync(UPLOADS_DIR).find((f) => f.startsWith(outputName) && f.endsWith('.png'));
-      if (!produced) throw new Error('pdftoppm did not produce an output file');
-      filename = produced;
+      const produced = fs
+        .readdirSync(UPLOADS_DIR)
+        .filter((f) => f.startsWith(outputName) && f.endsWith('.png'))
+        .map((f) => ({ f, page: parseInt(f.slice(outputName.length + 1, -'.png'.length), 10) }))
+        .sort((a, b) => a.page - b.page)
+        .map(({ f }) => f);
+      if (produced.length === 0) throw new Error('pdftoppm did not produce an output file');
+      filenames = produced;
     } catch (err) {
       return res.status(500).json({ error: `Could not read the PDF: ${(err as Error).message}` });
     }
   }
 
-  const publicApiUrl = process.env.PUBLIC_API_URL || `http://localhost:${process.env.PORT || 3333}`;
-  res.status(201).json({ url: `${publicApiUrl}/uploads/${filename}` });
+  res.status(201).json({ urls: filenames.map((f) => `${publicApiUrl}/uploads/${f}`) });
 });

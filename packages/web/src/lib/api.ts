@@ -12,8 +12,8 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
-/** Uploads a picked file (photo or PDF) and returns its public URL. */
-async function uploadFile(file: File): Promise<{ url: string }> {
+/** Uploads a picked file (photo or PDF) and returns its public page URL(s) -- a PDF renders to one URL per page. */
+async function uploadFile(file: File): Promise<{ urls: string[] }> {
   const formData = new FormData();
   formData.append('file', file);
   const res = await fetch(`${API_URL}/api/uploads`, { method: 'POST', body: formData });
@@ -54,7 +54,7 @@ export interface Menu {
 export const api = {
   uploadFile,
 
-  createMenu: (data: { imageUrl: string; restaurantWhatsapp: string }) =>
+  createMenu: (data: { imageUrls: string[]; restaurantWhatsapp: string }) =>
     request<{ slug: string; manageToken: string; restaurantName: string; itemCount: number }>('/api/menus', {
       method: 'POST',
       body: JSON.stringify(data),

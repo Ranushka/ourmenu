@@ -41,9 +41,10 @@ Return ONLY a JSON object (no markdown fences, no commentary) shaped like:
 - "price" is a plain number (no currency symbol).
 - "isVeg" is true for clearly vegetarian items, false for clearly non-veg (meat/fish/egg), null if unclear.
 - "category" is the section heading the item appeared under (e.g. "Starters"), null if none.
-- Skip section headings, prices-only lines, and non-item text from "items".`;
+- Skip section headings, prices-only lines, and non-item text from "items".
+- A menu is often several pages (e.g. a cover page, then item pages) -- items can appear on any page given, not just the first; combine them all into one "items" list.`;
 
-export async function parseMenuImage(imageUrl: string): Promise<ParsedMenu> {
+export async function parseMenuImage(imageUrls: string[]): Promise<ParsedMenu> {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
     throw new Error('OPENROUTER_API_KEY is not set');
@@ -66,8 +67,14 @@ export async function parseMenuImage(imageUrl: string): Promise<ParsedMenu> {
         {
           role: 'user',
           content: [
-            { type: 'text', text: 'Extract the restaurant name and menu items from this photo as JSON.' },
-            { type: 'image_url', image_url: { url: imageUrl } },
+            {
+              type: 'text',
+              text:
+                imageUrls.length > 1
+                  ? `Extract the restaurant name and menu items from these ${imageUrls.length} menu pages as JSON.`
+                  : 'Extract the restaurant name and menu items from this photo as JSON.',
+            },
+            ...imageUrls.map((url) => ({ type: 'image_url' as const, image_url: { url } })),
           ],
         },
       ],

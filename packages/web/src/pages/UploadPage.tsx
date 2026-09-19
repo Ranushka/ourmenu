@@ -31,10 +31,10 @@ export function UploadPage() {
     setError(null);
     setUploading(true);
     try {
-      const { url: imageUrl } = await api.uploadFile(file);
+      const { urls: imageUrls } = await api.uploadFile(file);
       setUploading(false);
       setParsing(true);
-      const res = await api.createMenu({ imageUrl, restaurantWhatsapp: whatsapp });
+      const res = await api.createMenu({ imageUrls, restaurantWhatsapp: whatsapp });
       setResult(res);
     } catch (e) {
       setError((e as Error).message);
