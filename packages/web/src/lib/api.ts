@@ -1,3 +1,5 @@
+import { renderPdfPages, compressImage } from './renderUpload';
+
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3333';
 
 export class ApiError extends Error {
@@ -21,77 +23,44 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export interface UploadProgress {
-  phase: 'uploading' | 'converting';
-  chunksUploaded: number;
-  totalChunks: number;
-  pagesConverted: number;
+  pagesUploaded: number;
   totalPages: number;
 }
 
-// 1MB per chunk -- small enough that a single chunk's upload can't
-// realistically hit a proxy timeout even on a slow connection, which is
-// exactly the problem this sidesteps: one multipart POST of a large file
-// was timing out at Cloudflare's edge on the request body itself, before
-// this app's own server ever got a chance to respond.
-const CHUNK_SIZE = 1024 * 1024;
+async function uploadBlob(blob: Blob): Promise<string> {
+  const res = await fetch(`${API_URL}/api/uploads`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'image/jpeg' },
+    body: blob,
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new ApiError(body.error || `Upload failed: ${res.status}`, res.status);
+  return (body as { url: string }).url;
+}
 
 /**
- * Uploads a picked file (photo or PDF) in small chunks and returns its
- * public page URL(s) -- a PDF renders to one URL per page. Calls
- * `onProgress` as chunks land and, for a PDF, as each page converts
- * server-side afterwards, rather than leaving the caller waiting on one
- * long request with no feedback (and, for a large file on a slow
- * connection, at real risk of that single request timing out).
+ * Uploads a picked file (photo or PDF) and returns its public page
+ * URL(s) -- a PDF renders to one URL per page. Both a PDF's pages and a
+ * plain photo are rendered/compressed to JPEG client-side first (see
+ * lib/renderUpload.ts) before ever reaching the network, and each page
+ * uploads as its own small, independent request -- deliberately, since a
+ * raw multi-page PDF or an unresized phone photo trying to survive one
+ * slow upload is what actually risks timing out on a slow connection,
+ * not anything server-side processing time could fix. Calls `onProgress`
+ * as each page finishes uploading.
  */
 async function uploadFile(file: File, onProgress?: (p: UploadProgress) => void): Promise<{ urls: string[] }> {
-  const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE));
+  const blobs =
+    file.type === 'application/pdf'
+      ? await renderPdfPages(file, (rendered, total) => onProgress?.({ pagesUploaded: 0, totalPages: total }))
+      : [await compressImage(file)];
 
-  const { sessionId } = await request<{ sessionId: string }>('/api/uploads/init', {
-    method: 'POST',
-    body: JSON.stringify({ filename: file.name, mimetype: file.type, size: file.size, totalChunks }),
-  });
-
-  for (let i = 0; i < totalChunks; i++) {
-    const chunk = file.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
-    const res = await fetch(`${API_URL}/api/uploads/${sessionId}/chunk/${i}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/octet-stream' },
-      body: chunk,
-    });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      throw new ApiError(body.error || `Chunk upload failed: ${res.status}`, res.status);
-    }
-    onProgress?.({ phase: 'uploading', chunksUploaded: i + 1, totalChunks, pagesConverted: 0, totalPages: 0 });
+  const urls: string[] = [];
+  for (const blob of blobs) {
+    urls.push(await uploadBlob(blob));
+    onProgress?.({ pagesUploaded: urls.length, totalPages: blobs.length });
   }
-
-  const completeRes = await fetch(`${API_URL}/api/uploads/${sessionId}/complete`, { method: 'POST' });
-  const completeBody = await completeRes.json().catch(() => ({}));
-  if (!completeRes.ok) throw new ApiError(completeBody.error || `Upload failed: ${completeRes.status}`, completeRes.status);
-
-  if (completeRes.status === 201) return completeBody as { urls: string[] };
-
-  // 202: a PDF, converting page-by-page in the background.
-  const { conversionId, totalPages } = completeBody as { conversionId: string; totalPages: number };
-  onProgress?.({ phase: 'converting', chunksUploaded: totalChunks, totalChunks, pagesConverted: 0, totalPages });
-
-  for (;;) {
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-    const progress = await request<{ totalPages: number; pagesConverted: number; done: boolean; error?: string; urls?: string[] }>(
-      `/api/uploads/${conversionId}`
-    );
-    onProgress?.({
-      phase: 'converting',
-      chunksUploaded: totalChunks,
-      totalChunks,
-      pagesConverted: progress.pagesConverted,
-      totalPages: progress.totalPages,
-    });
-    if (progress.done) {
-      if (progress.error) throw new ApiError(progress.error, 500);
-      return { urls: progress.urls ?? [] };
-    }
-  }
+  return { urls };
 }
 
 export interface MenuItem {

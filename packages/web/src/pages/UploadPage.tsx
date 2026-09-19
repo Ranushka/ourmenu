@@ -33,9 +33,8 @@ export function UploadPage({ initialWhatsapp }: { initialWhatsapp?: string } = {
   } | null>(null);
 
   function uploadButtonLabel(p: UploadProgress | null): string {
-    if (!p) return 'Uploading…';
-    if (p.phase === 'uploading') return p.totalChunks > 1 ? `Uploading… (${p.chunksUploaded} of ${p.totalChunks})` : 'Uploading…';
-    return p.totalPages > 1 ? `Reading page ${p.pagesConverted} of ${p.totalPages}…` : 'Reading the menu…';
+    if (!p || p.totalPages <= 1) return 'Uploading…';
+    return p.pagesUploaded === 0 ? 'Preparing pages…' : `Uploading page ${p.pagesUploaded} of ${p.totalPages}…`;
   }
 
   function onFileChange(f: File | null) {
