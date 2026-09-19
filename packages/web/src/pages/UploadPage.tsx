@@ -8,12 +8,17 @@ import { api, MenuStatus } from '../lib/api';
  * straight from their files); we read the restaurant's name off the menu
  * itself. The one thing we can't derive from a photo or a URL is where
  * orders should go, so that's the only thing asked for.
+ *
+ * `initialWhatsapp` is set when this renders in place of a 404 on /m/:slug
+ * -- the slug itself is a WhatsApp number now, so a diner landing on a
+ * restaurant's not-yet-created link can just upload it themselves with the
+ * number already filled in, instead of hitting a dead end.
  */
-export function UploadPage() {
+export function UploadPage({ initialWhatsapp }: { initialWhatsapp?: string } = {}) {
   const navigate = useNavigate();
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [whatsapp, setWhatsapp] = useState('');
+  const [whatsapp, setWhatsapp] = useState(initialWhatsapp ?? '');
   const [uploading, setUploading] = useState(false);
   const [parsing, setParsing] = useState(false);
   const [error, setError] = useState<string | null>(null);

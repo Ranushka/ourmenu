@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { api, Menu } from '../lib/api';
+import { api, ApiError, Menu } from '../lib/api';
 import { loadDinerProfile, saveDinerProfile } from '../lib/dinerProfile';
+import { UploadPage } from './UploadPage';
 
 type ViewMode = 'list' | 'grid';
 type VegFilter = 'all' | 'veg';
@@ -15,6 +16,7 @@ export function MenuPage() {
   const { slug = '' } = useParams();
   const [menu, setMenu] = useState<Menu | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notFound, setNotFound] = useState(false);
   const [search, setSearch] = useState('');
   const [view, setView] = useState<ViewMode>('list');
   const [vegFilter, setVegFilter] = useState<VegFilter>('all');
@@ -37,7 +39,14 @@ export function MenuPage() {
           // for more items landing until the background parse finishes.
           if (m.status === 'processing') timer = setTimeout(load, 5000);
         })
-        .catch((e) => !cancelled && setError(e.message));
+        .catch((e) => {
+          if (cancelled) return;
+          // The slug is a WhatsApp number now -- if nothing's been
+          // uploaded for it yet, let whoever landed here upload it
+          // themselves instead of hitting a dead end.
+          if (e instanceof ApiError && e.status === 404) setNotFound(true);
+          else setError(e.message);
+        });
     }
     load();
 
@@ -97,6 +106,7 @@ export function MenuPage() {
     }
   }
 
+  if (notFound) return <UploadPage initialWhatsapp={/^\d+$/.test(slug) ? `+${slug}` : undefined} />;
   if (error) return <div className="page-error">{error}</div>;
   if (!menu) return <div className="page-loading">Loading menu…</div>;
 
