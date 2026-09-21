@@ -92,6 +92,7 @@ export interface Menu {
   parseError?: string | null;
   totalPages?: number | null;
   pagesRead?: number | null;
+  sourceImageUrls: string[];
   categories: MenuCategory[];
   items: MenuItem[];
 }

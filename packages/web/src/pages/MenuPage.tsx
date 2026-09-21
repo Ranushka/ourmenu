@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { api, ApiError, Menu } from '../lib/api';
 import { loadDinerProfile, saveDinerProfile } from '../lib/dinerProfile';
 import { UploadPage } from './UploadPage';
@@ -117,6 +117,11 @@ export function MenuPage() {
         {menu.status === 'processing' && (
           <p className="field-hint">
             Still reading through this menu{menu.totalPages ? ` — page ${menu.pagesRead ?? 0} of ${menu.totalPages}` : ''} — more items may appear shortly.
+          </p>
+        )}
+        {menu.sourceImageUrls.length > 0 && (
+          <p className="field-hint">
+            <Link to={`/m/${menu.slug}/original`}>View the original menu as uploaded →</Link>
           </p>
         )}
         <div className="menu-controls">

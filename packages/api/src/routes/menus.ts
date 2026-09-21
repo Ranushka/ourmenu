@@ -162,7 +162,7 @@ menusRouter.post('/', async (req, res) => {
     const baseData = {
       restaurantName,
       restaurantWhatsapp,
-      sourceImageUrl: imageUrls[0],
+      sourceImageUrls: imageUrls,
       status: (restChunks.length > 0 ? 'processing' : 'ready') as 'processing' | 'ready',
       totalPages: imageUrls.length,
       pagesRead: firstChunk.length,

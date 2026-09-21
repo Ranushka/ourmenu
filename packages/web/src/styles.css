@@ -89,6 +89,23 @@ label {
   padding-bottom: 6rem;
 }
 
+.original-menu-page {
+  max-width: 720px;
+  margin: 0 auto;
+  padding-bottom: 2rem;
+}
+.original-menu-pages {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem;
+}
+.original-menu-page-image {
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid #eee;
+}
+
 .menu-header {
   position: sticky;
   top: 0;
