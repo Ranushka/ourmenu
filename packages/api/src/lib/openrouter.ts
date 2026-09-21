@@ -16,12 +16,21 @@ const OPENROUTER_URL = process.env.OPENROUTER_URL || 'https://openrouter.ai/api/
 // vision-language model with strong document/OCR performance.
 const DEFAULT_MODEL = process.env.OPENROUTER_MODEL || 'qwen/qwen3.8-27b:free';
 
+export interface ParsedMenuPhotoBox {
+  page: number; // 0-based index into the images sent in this request
+  x: number; // fraction (0-1) of that page image's width/height,
+  y: number; // top-left origin -- the model has no idea of actual
+  width: number; // pixel dimensions, only the image it's looking at
+  height: number;
+}
+
 export interface ParsedMenuItem {
   name: string;
   description?: string;
   price: number;
   category?: string;
   isVeg?: boolean | null;
+  photo?: ParsedMenuPhotoBox | null;
 }
 
 export interface ParsedMenu {
@@ -34,13 +43,14 @@ Return ONLY a JSON object (no markdown fences, no commentary) shaped like:
 {
   "restaurantName": string | null,
   "items": [
-    {"name": string, "description": string | null, "price": number, "category": string | null, "isVeg": boolean | null}
+    {"name": string, "description": string | null, "price": number, "category": string | null, "isVeg": boolean | null, "photo": {"page": number, "x": number, "y": number, "width": number, "height": number} | null}
   ]
 }
 - "restaurantName" is the restaurant/cafe's name if it appears anywhere on the menu (header, logo text, footer), else null. Do not guess from cuisine type.
 - "price" is a plain number (no currency symbol).
 - "isVeg" is true for clearly vegetarian items, false for clearly non-veg (meat/fish/egg), null if unclear.
 - "category" is the section heading the item appeared under (e.g. "Starters"), null if none.
+- "photo": if an actual photo of the dish itself appears on the menu next to it, tightly bound just that photo (not its price/text/border) and report it here -- "page" is the 0-based index of which of the images you were given it's on, "x"/"y"/"width"/"height" are fractions (0 to 1) of that specific image's own width/height, top-left origin. Omit or use null if there's no photo for that item.
 - Skip section headings, prices-only lines, and non-item text from "items".
 - A menu is often several pages (e.g. a cover page, then item pages) -- items can appear on any page given, not just the first; combine them all into one "items" list.`;
 

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma';
 import { chunkPages, parseMenuImageChunk, ParsedMenuItem } from '../lib/openrouter';
+import { cropDishPhoto } from '../lib/cropImage';
 
 export const menusRouter = Router();
 
@@ -25,8 +26,29 @@ function validItems(items: ParsedMenuItem[]): ParsedMenuItem[] {
   return items.filter((item) => item.name && typeof item.price === 'number' && Number.isFinite(item.price));
 }
 
+/**
+ * Resolves each item's model-reported photo bounding box into an actual
+ * cropped image, given the page URLs of the chunk it was parsed from
+ * ("photo.page" is an index into that same array -- the model only ever
+ * saw those images, so that's the only page numbering it can use). Runs
+ * concurrently since these are local crops, not network calls. Best-
+ * effort: an item whose box doesn't resolve to anything just keeps no
+ * photo rather than failing.
+ */
+async function resolveDishPhotos(items: ParsedMenuItem[], pageUrls: string[]): Promise<ParsedMenuItem[]> {
+  return Promise.all(
+    items.map(async (item) => {
+      const box = item.photo;
+      const pageUrl = box && Number.isInteger(box.page) ? pageUrls[box.page] : undefined;
+      if (!box || !pageUrl) return item;
+      const photoUrl = await cropDishPhoto(pageUrl, box);
+      return photoUrl ? { ...item, photoUrl } : item;
+    })
+  );
+}
+
 /** Appends a parsed chunk's items (and any new categories they need) to an existing menu. Returns how many items were saved. */
-async function appendItems(menuId: string, rawItems: ParsedMenuItem[]): Promise<number> {
+async function appendItems(menuId: string, rawItems: (ParsedMenuItem & { photoUrl?: string })[]): Promise<number> {
   const items = validItems(rawItems);
   if (items.length === 0) return 0;
 
@@ -54,6 +76,7 @@ async function appendItems(menuId: string, rawItems: ParsedMenuItem[]): Promise<
       description: item.description || undefined,
       price: item.price,
       isVeg: item.isVeg ?? null,
+      photoUrl: item.photoUrl,
       position: existingItemCount + i,
     })),
   });
@@ -72,7 +95,7 @@ async function processRemainingChunks(menuId: string, chunks: string[][], pagesR
   for (const pages of chunks) {
     try {
       const parsed = await parseMenuImageChunk(pages);
-      await appendItems(menuId, parsed.items);
+      await appendItems(menuId, await resolveDishPhotos(parsed.items, pages));
     } catch (err) {
       chunkErrors.push((err as Error).message);
     }
@@ -155,7 +178,7 @@ menusRouter.post('/', async (req, res) => {
       });
     }
 
-    const itemCount = await appendItems(menu.id, parsed.items);
+    const itemCount = await appendItems(menu.id, await resolveDishPhotos(parsed.items, firstChunk));
 
     res.status(201).json({
       slug: menu.slug,
